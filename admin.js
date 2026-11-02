@@ -1,0 +1,116 @@
+// Administración (solo administrador): usuarios, rutas y configuración. Más el menú "Más".
+import { h, icon, money, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, clean } from './lib.js';
+import { S, sb, q, isAdmin, cargarApoyo } from './state.js';
+
+export function mas(ctx) {
+  ctx.setTop('Más');
+  const t = (href, ic, label) => h('a', { class: 'tile', href }, icon(ic, 26), label);
+  const admin = isAdmin();
+  ctx.view.replaceChildren(h('div', { class: 'stack' },
+    h('div', { class: 'tiles' },
+      t('#/clientes', 'users', 'Clientes'), t('#/gastos', 'receipt', 'Gastos'), t('#/resumen', 'chart', 'Resumen del día'), t('#/liquidaciones', 'wallet', 'Liquidaciones')),
+    admin ? h('div', { class: 'section' }, h('h3', {}, 'Administración'), h('div', { class: 'tiles' },
+      t('#/usuarios', 'user', 'Usuarios'), t('#/rutas', 'route', 'Rutas'), t('#/config', 'sliders', 'Configuración'))) : null,
+    cuentaSesion(ctx)))
+}
+
+export function cuentaSesion(ctx) {
+  const ios = /iphone|ipad/i.test(navigator.userAgent) && !navigator.standalone;
+  const instalado = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  return h('div', { class: 'section' },
+    S.install && !instalado ? h('button', { class: 'btn block', style: { marginBottom: '10px' }, on: { click: async () => { S.install.prompt(); await S.install.userChoice; S.install = null; ctx.refresh(); } } }, icon('plus'), 'Instalar la app en este teléfono') : null,
+    ios ? h('p', { class: 'muted small' }, 'Para instalar en iPhone: botón Compartir de Safari → "Añadir a pantalla de inicio".') : null,
+    h('button', { class: 'btn block', on: { click: () => ctx.salir() } }, icon('logout'), 'Cerrar sesión'),
+    h('p', { class: 'muted small', style: { textAlign: 'center', marginTop: '10px' } }, S.profile.nombre + ' · ' + ({ ADMINISTRADOR: 'Administrador', SUPERVISOR: 'Supervisor', COBRADOR: 'Cobrador' })[S.profile.rol]));
+}
+
+export async function usuarios(ctx) {
+  const { view } = ctx;
+  ctx.setTop('Usuarios', { back: '#/mas', actions: [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }] });
+  view.replaceChildren(skeleton(4));
+  try { await cargarApoyo(); } catch (e) { fail(e); view.replaceChildren(empty('No se pudieron cargar los usuarios', 'Inténtalo de nuevo.')); return; }
+  const ROL = { ADMINISTRADOR: 'Administrador', SUPERVISOR: 'Supervisor', COBRADOR: 'Cobrador' };
+  view.replaceChildren(h('div', { class: 'stack' },
+    h('div', { class: 'ledger' }, S.profiles.slice().sort((a, b) => a.rol.localeCompare(b.rol) || a.nombre.localeCompare(b.nombre)).map((p) => h('button', { class: 'item ' + (p.estado === 'ACTIVO' ? 's-ok' : ''), style: { width: '100%', textAlign: 'left', background: 'none', border: 0 }, on: { click: () => editar(p, ctx) } },
+      h('div', { class: 'grow' }, h('div', { class: 'name' }, p.nombre), h('div', { class: 'meta' }, h('span', {}, ROL[p.rol]), h('span', {}, p.email || ''), p.estado !== 'ACTIVO' ? h('span', { class: 'late' }, 'Inactivo') : null)),
+      h('span', { class: 'muted' }, icon('edit', 20))))),
+    h('div', { class: 'panel' }, h('b', {}, '¿Cómo creo un usuario nuevo?'), h('p', { class: 'muted small', style: { marginTop: '6px' } }, 'Créalo en Supabase: Authentication > Users > Add user (marca Auto Confirm User). Luego vuelve aquí, ábrelo, elige su rol y actívalo.'))));
+}
+function editar(p, ctx) {
+  const nombre = h('input', { type: 'text', value: p.nombre });
+  const tel = h('input', { type: 'tel', value: p.telefono || '' });
+  const rol = selectEl([['COBRADOR', 'Cobrador'], ['SUPERVISOR', 'Supervisor'], ['ADMINISTRADOR', 'Administrador']], p.rol);
+  const estado = segmented([['ACTIVO', 'Activo'], ['INACTIVO', 'Inactivo']], p.estado);
+  const ver = segmented([['SI', 'Puede ver cuentas'], ['NO', 'No ve cuentas']], p.ver_cuentas ? 'SI' : 'NO');
+  const cuentas = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
+  const rec = selectEl([['', 'Sin cuenta de recaudo'], ...cuentas.map((c) => [c.id, c.nombre])], p.cuenta_recaudo_id || '');
+  sheet(p.nombre, (close) => h('div', {}, h('p', { class: 'muted small', style: { marginBottom: '12px' } }, p.email || ''),
+    field('Nombre (como aparece en la app)', nombre), field('Teléfono', tel), field('Rol', rol),
+    h('div', { class: 'field' }, h('label', {}, 'Estado'), estado), h('div', { class: 'field' }, h('label', {}, 'Cuentas'), ver),
+    field('Cuenta de recaudo', rec, 'Donde entran las transferencias que cobre esta persona.'),
+    h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+      if (!clean(nombre.value)) throw new Error('Escribe el nombre.');
+      if (p.id === S.profile.id && (estado.get() !== 'ACTIVO' || rol.value !== 'ADMINISTRADOR')) throw new Error('No puedes quitarte tu propio acceso de administrador.');
+      await q(sb.from('profiles').update({ nombre: clean(nombre.value), telefono: clean(tel.value) || null, rol: rol.value, estado: estado.get(), ver_cuentas: ver.get() === 'SI', cuenta_recaudo_id: rec.value || null }).eq('id', p.id));
+      close(); toast('Usuario actualizado'); ctx.refresh();
+    }) } }, 'Guardar')));
+}
+
+export async function rutas(ctx) {
+  const { view } = ctx;
+  ctx.setTop('Rutas', { back: '#/mas', actions: [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }] });
+  view.replaceChildren(skeleton(3));
+  try { await cargarApoyo(); } catch (e) { fail(e); view.replaceChildren(empty('No se pudieron cargar las rutas', 'Inténtalo de nuevo.')); return; }
+  const cobNombre = (id) => (S.profiles.find((x) => x.id === id) || {}).nombre || 'Sin cobrador';
+  view.replaceChildren(h('div', { class: 'stack' },
+    S.rutas.length ? h('div', { class: 'ledger' }, S.rutas.map((r) => h('button', { class: 'item ' + (r.estado === 'ACTIVA' ? 's-ok' : ''), style: { width: '100%', textAlign: 'left', background: 'none', border: 0 }, on: { click: () => formRuta(r, ctx) } },
+      h('div', { class: 'grow' }, h('div', { class: 'name' }, r.nombre), h('div', { class: 'meta' }, h('span', {}, cobNombre(r.cobrador_id)), r.zona ? h('span', {}, r.zona) : null, r.estado !== 'ACTIVA' ? h('span', { class: 'late' }, 'Inactiva') : null)),
+      h('span', { class: 'muted' }, icon('edit', 20))))) : empty('Aún no hay rutas', 'Crea una y asígnale un cobrador.'),
+    h('button', { class: 'btn primary fab', on: { click: () => formRuta(null, ctx) } }, icon('plus'), 'Nueva ruta')));
+}
+function formRuta(r, ctx) {
+  const nombre = h('input', { type: 'text', value: r ? r.nombre : '', placeholder: 'Ej.: Ruta 3' });
+  const zona = h('input', { type: 'text', value: (r && r.zona) || '' });
+  const cob = selectEl([['', 'Sin cobrador'], ...S.profiles.filter((p) => p.rol === 'COBRADOR').map((p) => [p.id, p.nombre])], (r && r.cobrador_id) || '');
+  const estado = segmented([['ACTIVA', 'Activa'], ['INACTIVA', 'Inactiva']], r ? r.estado : 'ACTIVA');
+  sheet(r ? 'Editar ruta' : 'Nueva ruta', (close) => h('div', {}, field('Nombre', nombre), field('Zona', zona), field('Cobrador', cob, 'Los clientes de esta ruta se cobran por este cobrador.'), h('div', { class: 'field' }, h('label', {}, 'Estado'), estado),
+    h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+      if (!clean(nombre.value)) throw new Error('Escribe el nombre de la ruta.');
+      const datos = { nombre: clean(nombre.value), zona: clean(zona.value) || null, cobrador_id: cob.value || null, estado: estado.get() };
+      if (r) {
+        await q(sb.from('rutas').update(datos).eq('id', r.id));
+        // Si cambió el cobrador, los clientes y préstamos activos de la ruta pasan al nuevo cobrador
+        if ((r.cobrador_id || null) !== datos.cobrador_id) await q(sb.rpc('reasignar_ruta', { p_ruta: r.id }));
+      } else await q(sb.from('rutas').insert(datos));
+      close(); toast('Ruta guardada'); ctx.refresh();
+    }) } }, 'Guardar')));
+}
+
+const CFG = {
+  PCT_PAPELERIA_CLIENTE: ['Papelería al cliente (%)', 'Porcentaje del préstamo que se cobra como papelería.'],
+  PCT_COMISION_COBRADOR: ['Comisión del cobrador (%)', 'Parte de la papelería, en % del préstamo, que es del cobrador.'],
+  COMISION_INCLUYE_RENOVADOS: ['¿Los renovados pagan comisión?', 'SI o NO.'],
+  PAGO_BASE_SEMANAL: ['Pago base semanal (pesos)', 'Se usa en las liquidaciones.'],
+  DIARIO_OMITE_DOMINGO: ['¿Las cuotas diarias saltan los domingos?', 'SI o NO. Hoy los domingos se cobran.']
+};
+export async function config(ctx) {
+  const { view } = ctx;
+  ctx.setTop('Configuración', { back: '#/mas' });
+  view.replaceChildren(skeleton(4));
+  try { await cargarApoyo(); } catch (e) { fail(e); view.replaceChildren(empty('No se pudo cargar', 'Inténtalo de nuevo.')); return; }
+  const inputs = {};
+  const campos = Object.entries(CFG).map(([k, [t, d]]) => {
+    const yn = k === 'COMISION_INCLUYE_RENOVADOS' || k === 'DIARIO_OMITE_DOMINGO';
+    inputs[k] = yn ? selectEl([['SI', 'Sí'], ['NO', 'No']], S.cfg[k] || 'NO') : h('input', { type: 'text', inputmode: 'decimal', value: S.cfg[k] || '' });
+    return field(t, inputs[k], d);
+  });
+  view.replaceChildren(h('div', { class: 'stack' }, h('div', { class: 'panel' }, campos,
+    h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+      for (const k of Object.keys(CFG)) {
+        const v = clean(inputs[k].value).replace(',', '.');
+        if (!v) throw new Error('Completa todos los valores.');
+        await q(sb.from('configuracion').update({ valor: v }).eq('clave', k));
+      }
+      await cargarApoyo(); toast('Configuración guardada');
+    }) } }, 'Guardar'))));
+}
