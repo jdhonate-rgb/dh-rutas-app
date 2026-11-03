@@ -1,10 +1,13 @@
 // Clientes, préstamos y cuadre de caja (supervisión y administración).
-import { h, clear, icon, money, fdate, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, addDays, addMonths, num, clean } from './lib.js';
+import { h, clear, icon, money, fdate, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, addDays, addMonths, num, clean, confirmarEliminar } from './lib.js';
 import { S, sb, q, isAdmin, nombreDe, cfgNum } from './state.js';
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const cap = (s) => (s ? s[0] + s.slice(1).toLowerCase() : '');
 const sum = (arr, k) => arr.reduce((a, r) => a + Number(r[k] || 0), 0);
+const TIPOS = { NUEVO: 'Nuevo', MIGRACION: 'Migración', RENOVACION: 'Renovación', REFINANCIACION: 'Refinanciación' };
+const ARCHIVADOS = ['RENOVADO', 'REFINANCIADO', 'CANCELADO'];
+const setSeg = (s, v) => { s.dataset.value = v; [...s.children].forEach((b) => b.classList.toggle('on', b.dataset.v === v)); };
 const rutaNombre = (id) => { const r = S.rutas.find((x) => x.id === id); return r ? r.nombre : ''; };
 
 // ---------------------------------------------------------------- Clientes
@@ -43,7 +46,7 @@ export async function cliente(ctx) {
     view.replaceChildren(skeleton(4));
     try {
       c = await q(sb.from('clientes').select('*').eq('id', id).single());
-      prestamos = await q(sb.from('v_prestamos_resumen').select('id,estado,modalidad,valor_prestado,saldo,fecha_desembolso').eq('cliente_id', id).order('fecha_desembolso', { ascending: false }));
+      prestamos = await q(sb.from('v_prestamos_resumen').select('id,estado,modalidad,valor_prestado,saldo,fecha_desembolso,tipo_operacion').eq('cliente_id', id).order('fecha_desembolso', { ascending: false }));
     } catch (e) { fail(e); view.replaceChildren(empty('No se pudo abrir el cliente', 'Inténtalo de nuevo.')); return; }
     ctx.setTop(c.nombre_completo, { back: '#/clientes' });
   }
@@ -76,9 +79,9 @@ export async function cliente(ctx) {
     h('div', { class: 'panel' }, field('Nombre completo', f.nombre), h('div', { class: 'grid2' }, field('Documento', f.doc), field('Teléfono', f.tel)), field('Otro teléfono', f.tel2), field('Dirección', f.dir), h('div', { class: 'grid2' }, field('Barrio', f.barrio), field('Estado', f.estado)), field('Referencia de la dirección', f.ref), field('Ruta', f.ruta, 'El cobrador es el de la ruta que elijas.'), field('Observaciones', f.obs), guardar),
     nuevo ? null : h('div', { class: 'section' }, h('h3', {}, 'Préstamos'),
       prestamos.length ? h('div', { class: 'ledger' }, prestamos.map((p) => h('a', { class: 'item ' + (p.estado === 'ACTIVO' ? 's-hoy' : 's-ok'), href: '#/prestamo/' + p.id },
-        h('div', { class: 'grow' }, h('div', { class: 'name' }, money(p.valor_prestado) + ' · ' + cap(p.modalidad)), h('div', { class: 'meta' }, h('span', {}, fdate(p.fecha_desembolso)), h('span', {}, cap(p.estado)))),
-        h('div', { class: 'plate quiet' }, money(p.saldo), h('small', {}, 'saldo'))))) : empty('Este cliente no tiene préstamos', ''),
-      h('a', { class: 'btn block', style: { marginTop: '12px' }, href: '#/prestamo-nuevo?cliente=' + id }, icon('plus'), 'Nuevo préstamo'))));
+        h('div', { class: 'grow' }, h('div', { class: 'name' }, money(p.valor_prestado) + ' · ' + cap(p.modalidad)), h('div', { class: 'meta' }, h('span', {}, fdate(p.fecha_desembolso)), h('span', {}, cap(p.estado)), p.tipo_operacion !== 'NUEVO' ? h('span', { class: 'tag' }, TIPOS[p.tipo_operacion]) : null)),
+        h('div', { class: 'plate quiet' }, p.estado === 'ACTIVO' ? money(p.saldo) : cap(p.estado), h('small', {}, p.estado === 'ACTIVO' ? 'saldo' : money(p.valor_prestado)))))) : empty('Este cliente no tiene préstamos', ''),
+      h('div', { class: 'row', style: { marginTop: '12px' } }, h('a', { class: 'btn', href: '#/prestamo-nuevo?cliente=' + id }, icon('plus'), 'Nuevo préstamo'), h('a', { class: 'btn', href: '#/prestamo-nuevo?tipo=MIGRACION&cliente=' + id }, 'Migrar préstamo')))));
 }
 
 // ---------------------------------------------------------------- Préstamos
@@ -87,20 +90,20 @@ export async function prestamos(ctx) {
   ctx.setTop('Préstamos', { actions: [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }] });
   view.replaceChildren(skeleton(6));
   let rows;
-  try { rows = await q(sb.from('v_prestamos_resumen').select('id,nombre_completo,modalidad,estado,saldo,valor_prestado,dias_atraso,cobrador_id,fecha_desembolso,cuotas_pagadas,numero_cuotas').order('fecha_desembolso', { ascending: false }).limit(1000)); }
+  try { rows = await q(sb.from('v_prestamos_resumen').select('id,nombre_completo,modalidad,estado,saldo,valor_prestado,dias_atraso,cobrador_id,fecha_desembolso,cuotas_pagadas,numero_cuotas,tipo_operacion').order('fecha_desembolso', { ascending: false }).limit(1000)); }
   catch (e) { fail(e); view.replaceChildren(empty('No se pudieron cargar los préstamos', 'Inténtalo de nuevo.')); return; }
   let estado = 'ACTIVO', texto = '';
   const lista = h('div', {});
-  const chips = h('div', { class: 'chips' }, [['ACTIVO', 'Activos'], ['PAGADO', 'Pagados'], ['TODOS', 'Todos']].map(([v, t]) =>
+  const chips = h('div', { class: 'chips' }, [['ACTIVO', 'Activos'], ['PAGADO', 'Pagados'], ['ARCHIVADO', 'Archivados'], ['TODOS', 'Todos']].map(([v, t]) =>
     h('button', { class: 'chip' + (estado === v ? ' on' : ''), on: { click: (e) => { estado = v; [...chips.children].forEach((x) => x.classList.remove('on')); e.currentTarget.classList.add('on'); pintar(); } } }, t)));
   const buscar = h('input', { type: 'search', placeholder: 'Buscar cliente', 'aria-label': 'Buscar', on: { input: (e) => { texto = norm(e.target.value); pintar(); } } });
   function pintar() {
-    const f = rows.filter((r) => (estado === 'TODOS' || r.estado === estado) && (!texto || norm(r.nombre_completo).includes(texto)));
+    const f = rows.filter((r) => (estado === 'TODOS' || (estado === 'ARCHIVADO' ? ARCHIVADOS.includes(r.estado) : r.estado === estado)) && (!texto || norm(r.nombre_completo).includes(texto)));
     const saldo = sum(f.filter((r) => r.estado === 'ACTIVO'), 'saldo');
     if (!f.length) { lista.replaceChildren(empty('No hay préstamos', 'Crea el primero con el botón Nuevo préstamo.')); return; }
-    lista.replaceChildren(h('div', { class: 'row between muted small', style: { margin: '6px 2px 8px' } }, h('span', {}, f.length + (f.length === 1 ? ' préstamo' : ' préstamos')), estado === 'PAGADO' ? null : h('b', {}, 'Saldo ' + money(saldo))),
+    lista.replaceChildren(h('div', { class: 'row between muted small', style: { margin: '6px 2px 8px' } }, h('span', {}, f.length + (f.length === 1 ? ' préstamo' : ' préstamos')), estado === 'ACTIVO' || estado === 'TODOS' ? h('b', {}, 'Saldo ' + money(saldo)) : null),
       h('div', { class: 'ledger' }, f.slice(0, 300).map((r) => h('a', { class: 'item ' + (r.dias_atraso > 0 && r.estado === 'ACTIVO' ? 's-late' : r.estado === 'ACTIVO' ? 's-hoy' : 's-ok'), href: '#/prestamo/' + r.id },
-        h('div', { class: 'grow' }, h('div', { class: 'name' }, r.nombre_completo), h('div', { class: 'meta' }, h('span', {}, cap(r.modalidad)), h('span', {}, r.cuotas_pagadas + '/' + r.numero_cuotas + ' cuotas'), r.estado === 'ACTIVO' && r.dias_atraso > 0 ? h('span', { class: 'late' }, r.dias_atraso + ' d de atraso') : null, h('span', {}, nombreDe(r.cobrador_id)))),
+        h('div', { class: 'grow' }, h('div', { class: 'name' }, r.nombre_completo), h('div', { class: 'meta' }, h('span', {}, cap(r.modalidad)), h('span', {}, r.cuotas_pagadas + '/' + r.numero_cuotas + ' cuotas'), r.estado === 'ACTIVO' && r.dias_atraso > 0 ? h('span', { class: 'late' }, r.dias_atraso + ' d de atraso') : null, h('span', {}, nombreDe(r.cobrador_id)), r.tipo_operacion !== 'NUEVO' ? h('span', { class: 'tag' }, TIPOS[r.tipo_operacion]) : null)),
         h('div', { class: 'plate quiet' }, r.estado === 'ACTIVO' ? money(r.saldo) : cap(r.estado), h('small', {}, r.estado === 'ACTIVO' ? 'saldo' : money(r.valor_prestado)))))));
   }
   view.replaceChildren(h('div', { class: 'stack' }, h('div', {}, h('div', { class: 'search' }, icon('search', 20), buscar), chips), lista,
@@ -123,15 +126,21 @@ function calendario(mod, primero, n, omiteDomingo) {
 
 export async function prestamoNuevo(ctx) {
   const { view } = ctx;
-  ctx.setTop('Nuevo préstamo', { back: '#/prestamos' });
+  const qa = ctx.query.anterior || null;
+  let tipo = qa ? (ctx.query.tipo === 'REFINANCIACION' ? 'REFINANCIACION' : 'RENOVACION') : (ctx.query.tipo === 'MIGRACION' ? 'MIGRACION' : 'NUEVO');
+  const TITULO = { NUEVO: 'Nuevo préstamo', MIGRACION: 'Migrar préstamo', RENOVACION: 'Renovar préstamo', REFINANCIACION: 'Refinanciar préstamo' };
+  ctx.setTop(TITULO[tipo], { back: qa ? '#/prestamo/' + qa : '#/prestamos' });
   view.replaceChildren(skeleton(4));
-  let cls;
-  try { cls = await q(sb.from('clientes').select('id,nombre_completo,documento,barrio,cobrador_id').eq('estado', 'ACTIVO').order('nombre_completo').limit(2000)); }
-  catch (e) { fail(e); view.replaceChildren(empty('No se pudo preparar el formulario', 'Inténtalo de nuevo.')); return; }
+  let cls, ant = null;
+  try {
+    cls = await q(sb.from('clientes').select('id,nombre_completo,documento,barrio,cobrador_id').eq('estado', 'ACTIVO').order('nombre_completo').limit(2000));
+    if (qa) ant = await q(sb.from('v_prestamos_resumen').select('*').eq('id', qa).single());
+  } catch (e) { fail(e); view.replaceChildren(empty('No se pudo preparar el formulario', 'Inténtalo de nuevo.')); return; }
 
-  let elegido = ctx.query.cliente ? cls.find((c) => c.id === ctx.query.cliente) : null;
+  let elegido = ant ? cls.find((c) => c.id === ant.cliente_id) || { id: ant.cliente_id, nombre_completo: ant.nombre_completo } : (ctx.query.cliente ? cls.find((c) => c.id === ctx.query.cliente) : null);
   const pctPap = cfgNum('PCT_PAPELERIA_CLIENTE', 0);
   const omite = S.cfg.DIARIO_OMITE_DOMINGO === 'SI';
+  const conDinero = () => tipo === 'NUEVO' || tipo === 'RENOVACION';   // solo ahí sale dinero y se descuenta papelería
 
   const pick = h('div', {});
   const buscar = h('input', { type: 'search', placeholder: 'Escribe el nombre o documento', autocomplete: 'off' });
@@ -140,7 +149,7 @@ export async function prestamoNuevo(ctx) {
     clear(pick);
     if (elegido) {
       pick.append(h('div', { class: 'panel row between' }, h('div', {}, h('b', {}, elegido.nombre_completo), h('div', { class: 'small muted' }, [elegido.barrio, nombreDe(elegido.cobrador_id)].filter(Boolean).join(' · '))),
-        h('button', { class: 'btn small', type: 'button', on: { click: () => { elegido = null; pintarPick(); calc(); } } }, 'Cambiar')));
+        qa ? null : h('button', { class: 'btn small', type: 'button', on: { click: () => { elegido = null; pintarPick(); calc(); } } }, 'Cambiar')));
     } else {
       pick.append(h('div', { class: 'search' }, icon('search', 20), buscar), resultados);
       mostrar();
@@ -157,56 +166,89 @@ export async function prestamoNuevo(ctx) {
 
   const valor = moneyInput({ 'aria-label': 'Valor prestado' });
   const pct = h('input', { type: 'number', inputmode: 'decimal', min: '0', step: '0.5', placeholder: '20', 'aria-label': 'Porcentaje de interés' });
-  const mod = selectEl([['DIARIO', 'Diario'], ['SEMANAL', 'Semanal'], ['QUINCENAL', 'Quincenal'], ['MENSUAL', 'Mensual']], 'DIARIO');
+  const mod = selectEl([['DIARIO', 'Diario'], ['SEMANAL', 'Semanal'], ['QUINCENAL', 'Quincenal'], ['MENSUAL', 'Mensual']], ant ? ant.modalidad : 'DIARIO');
   const cuotas = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '120', placeholder: '24' });
   const fecha = h('input', { type: 'date', value: hoyCO() });
+  const yaPag = moneyInput({ 'aria-label': 'Ya cobrado' });
   const cuentasOk = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
   const cuenta = selectEl(cuentasOk.map((c) => [c.id, c.nombre]));
   const medio = segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; });
   const cuentaBox = h('div', { style: { display: 'none' } }, field('Cuenta de la que sale', cuenta));
   const descPap = segmented([['SI', 'Sí, descontar'], ['NO', 'No descontar']], 'SI', () => calc());
-  const pagaCom = segmented([['SI', 'Sí, pagar'], ['NO', 'No pagar']], 'SI');
+  const pagaCom = segmented([['SI', 'Sí, pagar'], ['NO', 'No pagar']], conDinero() ? 'SI' : 'NO');
   const prev = h('div', { class: 'panel' });
 
-  function calc() {
-    const v = moneyVal(valor), p = Number(pct.value), n = Number(cuotas.value);
-    if (!v || pct.value === '' || !n) { prev.replaceChildren(h('p', { class: 'muted' }, 'Completa valor, interés y cuotas para ver el resumen.')); return null; }
-    const conPap = descPap.get() === 'SI';
-    const pap = conPap ? Math.round(v * pctPap / 100) : 0, ent = v - pap, int = Math.round(v * p / 100), tot = v + int, cuota = Math.round(tot / n);
-    const cal = calendario(mod.value, primerPago(mod.value, fecha.value), n, omite);
-    prev.replaceChildren(
-      h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Valor prestado'), h('span', { class: 'amt' }, money(v))),
-      h('div', { class: 'line' }, h('span', { class: 'grow' }, conPap ? 'Papelería (' + pctPap + ' %)' : 'Papelería (no se descuenta)'), h('span', { class: 'amt' }, money(pap))),
-      h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Se entrega al cliente'), h('b', { class: 'amt' }, money(ent))),
-      h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Interés (' + p + ' %)'), h('span', { class: 'amt' }, money(int))),
-      h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Total a cobrar'), h('b', { class: 'amt' }, money(tot))),
-      h('div', { class: 'line' }, h('span', { class: 'grow' }, n + ' cuotas de'), h('span', { class: 'amt' }, money(cuota))),
-      h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Primer cobro'), h('span', { class: 'amt' }, fdate(cal[0]))),
-      h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Última cuota'), h('span', { class: 'amt' }, fdate(cal[cal.length - 1]))));
-    return { v, p, n };
+  const selTipo = qa ? null : segmented([['NUEVO', 'Nuevo'], ['MIGRACION', 'Migración']], tipo, (v) => { tipo = v; ctx.setTop(TITULO[tipo], { back: '#/prestamos' }); setSeg(pagaCom, conDinero() ? 'SI' : 'NO'); aplicarTipo(); calc(); });
+  const info = h('div', {});
+  const bValor = field('Valor prestado', valor);
+  const bYa = h('div', {}, field('Ya cobrado hasta hoy', yaPag, 'Lo que el cliente ya pagó de este préstamo. No mueve dinero de las cuentas.'));
+  const bDinero = h('div', {}, h('div', { class: 'field' }, h('label', {}, 'Cómo se entrega el dinero'), medio), cuentaBox,
+    h('div', { class: 'field' }, h('label', {}, 'Papelería al cliente (' + pctPap + ' %)'), descPap, h('p', { class: 'hint' }, 'Se descuenta al entregar el dinero, pero la deuda del cliente no baja.')));
+  const lblFecha = h('label', {}, 'Fecha de desembolso');
+  const bFecha = h('div', { class: 'field' }, lblFecha, fecha);
+  function aplicarTipo() {
+    bValor.style.display = tipo === 'REFINANCIACION' ? 'none' : '';
+    bYa.style.display = tipo === 'MIGRACION' ? '' : 'none';
+    bDinero.style.display = conDinero() ? '' : 'none';
+    lblFecha.textContent = tipo === 'MIGRACION' ? 'Fecha en que se hizo el préstamo' : tipo === 'REFINANCIACION' ? 'Fecha de la refinanciación' : 'Fecha de desembolso';
+    clear(info);
+    if (tipo === 'MIGRACION') info.append(h('p', { class: 'hint panelnote' }, 'Para cargar un préstamo que ya venía andando. No descuenta papelería ni mueve dinero de las cuentas.'));
+    if (tipo === 'RENOVACION') info.append(h('p', { class: 'hint panelnote' }, 'Renovación del préstamo que el cliente pagó por completo (' + money(ant.valor_prestado) + ' · ' + fdate(ant.fecha_desembolso) + '). Ese préstamo queda archivado.'));
+    if (tipo === 'REFINANCIACION') info.append(h('div', { class: 'panel' }, h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Préstamo actual'), h('span', { class: 'amt' }, money(ant.valor_prestado))),
+      h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Ya pagó'), h('span', { class: 'amt' }, money(ant.total_cobrado))),
+      h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Saldo que se refinancia'), h('b', { class: 'amt' }, money(ant.saldo))),
+      h('p', { class: 'hint' }, 'Ese saldo pasa a ser el valor del nuevo préstamo; el interés que pactes se suma sobre él. No se descuenta papelería ni sale dinero. El préstamo actual queda archivado.')));
   }
-  [valor, pct, cuotas, fecha].forEach((e) => e.addEventListener('input', calc));
+
+  function calc() {
+    const v = tipo === 'REFINANCIACION' ? Number(ant.saldo) : moneyVal(valor), p = Number(pct.value), n = Number(cuotas.value);
+    if (!v || pct.value === '' || !n) { prev.replaceChildren(h('p', { class: 'muted' }, 'Completa ' + (tipo === 'REFINANCIACION' ? 'interés y cuotas' : 'valor, interés y cuotas') + ' para ver el resumen.')); return null; }
+    const conPap = conDinero() && descPap.get() === 'SI';
+    const pap = conPap ? Math.round(v * pctPap / 100) : 0, ent = v - pap, int = Math.round(v * p / 100), tot = v + int, cuota = Math.round(tot / n);
+    const ya = tipo === 'MIGRACION' ? moneyVal(yaPag) : 0;
+    if (ya >= tot) { prev.replaceChildren(h('p', { class: 'err' }, 'Lo ya cobrado (' + money(ya) + ') debe ser menor al total a cobrar (' + money(tot) + ').')); return null; }
+    const cal = calendario(mod.value, primerPago(mod.value, fecha.value), n, omite);
+    const L = (a, b, bold) => h('div', { class: 'line' }, h(bold ? 'b' : 'span', { class: 'grow' }, a), h(bold ? 'b' : 'span', { class: 'amt' }, b));
+    prev.replaceChildren(...[
+      L(tipo === 'REFINANCIACION' ? 'Saldo que se refinancia' : 'Valor prestado', money(v)),
+      conDinero() ? L('Papelería (' + (conPap ? pctPap + ' %' : 'no se descuenta') + ')', money(pap)) : null,
+      conDinero() ? L('Se entrega al cliente', money(ent), true) : null,
+      L('Interés (' + p + ' %)', money(int)),
+      L('Total a cobrar', money(tot), true),
+      ya ? L('Ya cobrado', '− ' + money(ya)) : null,
+      ya ? L('Saldo pendiente', money(tot - ya), true) : null,
+      L(n + ' cuotas de', money(cuota)),
+      L(tipo === 'MIGRACION' ? 'Primera cuota' : 'Primer cobro', fdate(cal[0])),
+      L('Última cuota', fdate(cal[cal.length - 1]))].filter(Boolean));
+    return { v, p, n, ya };
+  }
+  [valor, pct, cuotas, fecha, yaPag].forEach((e) => e.addEventListener('input', calc));
   mod.addEventListener('change', calc);
 
   const crear = h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
     if (!elegido) throw new Error('Elige el cliente.');
     const r = calc();
-    if (!r) throw new Error('Completa el valor, el interés y el número de cuotas.');
-    if (medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No hay cuentas disponibles para el desembolso.');
-    const id = await q(sb.rpc('crear_prestamo', { p_cliente: elegido.id, p_valor: r.v, p_porcentaje: r.p, p_modalidad: mod.value, p_cuotas: r.n, p_cuenta: medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: medio.get(), p_fecha_desembolso: fecha.value, p_descuenta_papeleria: descPap.get() === 'SI', p_paga_comision: pagaCom.get() === 'SI' }));
-    toast('Préstamo creado'); location.hash = '#/prestamo/' + id;
-  }) } }, 'Crear préstamo');
+    if (!r) throw new Error('Completa los datos del préstamo.');
+    if (conDinero() && medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No hay cuentas disponibles para el desembolso.');
+    const id = await q(sb.rpc('crear_prestamo', {
+      p_cliente: elegido.id, p_valor: r.v, p_porcentaje: r.p, p_modalidad: mod.value, p_cuotas: r.n,
+      p_cuenta: conDinero() && medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: conDinero() ? medio.get() : 'EFECTIVO',
+      p_fecha_desembolso: fecha.value, p_anterior: qa, p_tipo: tipo, p_ya_pagado: r.ya,
+      p_descuenta_papeleria: conDinero() ? descPap.get() === 'SI' : null, p_paga_comision: pagaCom.get() === 'SI' }));
+    toast({ NUEVO: 'Préstamo creado', MIGRACION: 'Préstamo migrado', RENOVACION: 'Préstamo renovado', REFINANCIACION: 'Préstamo refinanciado' }[tipo]); location.hash = '#/prestamo/' + id;
+  }) } }, 'Guardar préstamo');
 
   view.replaceChildren(h('div', { class: 'stack' },
+    selTipo ? h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Tipo de préstamo'), selTipo) : null,
+    info,
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Cliente'), pick),
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Condiciones'),
-      field('Valor prestado', valor), h('div', { class: 'grid2' }, field('Interés (%)', pct, 'Lo define quien presta'), field('Número de cuotas', cuotas)),
-      h('div', { class: 'grid2' }, field('Modalidad de cobro', mod), field('Fecha de desembolso', fecha)),
-      h('div', { class: 'field' }, h('label', {}, 'Cómo se entrega el dinero'), medio), cuentaBox,
-      h('div', { class: 'field' }, h('label', {}, 'Papelería al cliente (' + pctPap + ' %)'), descPap),
+      bValor, h('div', { class: 'grid2' }, field('Interés (%)', pct, 'Lo define quien presta'), field('Número de cuotas', cuotas)),
+      h('div', { class: 'grid2' }, field('Modalidad de cobro', mod), bFecha),
+      bYa, bDinero,
       h('div', { class: 'field' }, h('label', {}, 'Comisión para el cobrador'), pagaCom, h('p', { class: 'hint' }, 'Si eliges "No pagar", este préstamo no suma a la comisión de la liquidación.'))),
     h('div', { class: 'section' }, h('h3', {}, 'Resumen'), prev), crear));
-  pintarPick(); calc();
+  aplicarTipo(); pintarPick(); calc();
 }
 
 // ---------------------------------------------------------------- Caja
@@ -254,6 +296,7 @@ export async function caja(ctx) {
         cuerpo.push(h('button', { class: 'btn primary block', style: { marginTop: '8px' }, on: { click: () => cerrar(cj, esperado, c) } }, 'Cerrar caja'));
       }
     }
+    if (cj) cuerpo.push(h('button', { class: 'btn danger small block', style: { marginTop: '8px' }, on: { click: () => confirmarEliminar({ titulo: 'Eliminar caja de ' + c.nombre, texto: 'Se elimina esta caja y se reversan sus movimientos de efectivo (base y entrega). Los cobros del día quedan sin caja.', onOk: async (m) => { await q(sb.rpc('eliminar_caja', { p_caja: cj.id, p_motivo: m })); toast('Caja eliminada'); cargar(); } }) } }, 'Eliminar caja'));
     return h('div', { class: 'panel' }, h('div', { class: 'row between' }, h('b', { style: { fontSize: '18px' } }, c.nombre), h('span', { class: 'tag ' + (cerrada ? 'ok' : cj ? 'warn' : '') }, cerrada ? 'Cerrada' : cj ? 'Abierta' : 'Sin abrir')), cuerpo);
   }
   const kvc = (k, v) => h('div', {}, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v));
