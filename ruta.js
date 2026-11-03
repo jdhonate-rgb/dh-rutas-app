@@ -1,6 +1,8 @@
 // Ruta del cobrador, tarjeta del cliente (préstamo) y registro de cobros.
 import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, telDigits, hoyCO, num } from './lib.js';
 import { S, sb, q, isStaff, nombreDe } from './state.js';
+import { confirmarEliminar } from './lib.js';
+const TIPOS = { NUEVO: 'Nuevo', MIGRACION: 'Migración', RENOVACION: 'Renovación', REFINANCIACION: 'Refinanciado' };
 
 const F = { vista: 'hoy', mod: 'TODAS', buscar: '', cobrador: 'TODOS' };
 const MODS = [['TODAS', 'Todas'], ['DIARIO', 'Diario'], ['SEMANAL', 'Semanal'], ['QUINCENAL', 'Quincenal'], ['MENSUAL', 'Mensual']];
@@ -52,8 +54,8 @@ export async function ruta(ctx) {
     const porCobrar = b.reduce((a, r) => a + Number(r.valor_a_cobrar || 0), 0);
     const cobrado = b.reduce((a, r) => a + Number(r.cobrado_hoy || 0), 0);
     clear(strip).append(
-      h('div', { class: 'stat' }, h('div', { class: 'v' }, money(porCobrar)), h('div', { class: 'l' }, 'Falta por cobrar')),
-      h('div', { class: 'stat good' }, h('div', { class: 'v' }, money(cobrado)), h('div', { class: 'l' }, 'Cobrado hoy')));
+      h('button', { class: 'stat tap', type: 'button', on: { click: () => detalleRuta('Falta por cobrar', b.filter((r) => Number(r.valor_a_cobrar || 0) > 0), 'valor_a_cobrar', staff) } }, h('div', { class: 'v' }, money(porCobrar)), h('div', { class: 'l' }, 'Falta por cobrar')),
+      h('button', { class: 'stat good tap', type: 'button', on: { click: () => detalleRuta('Cobrado hoy', b.filter((r) => Number(r.cobrado_hoy || 0) > 0), 'cobrado_hoy', staff) } }, h('div', { class: 'v' }, money(cobrado)), h('div', { class: 'l' }, 'Cobrado hoy')));
     const items = sets[F.vista];
     clear(list);
     if (!items.length) {
@@ -73,6 +75,14 @@ export async function ruta(ctx) {
   pintarLista();
 }
 
+function detalleRuta(titulo, items, campo, staff) {
+  const total = items.reduce((a, r) => a + Number(r[campo] || 0), 0);
+  sheet(titulo + ' · ' + money(total), (close) => items.length
+    ? h('div', { class: 'ledger' }, items.map((r) => h('a', { class: 'item', href: '#/prestamo/' + r.prestamo_id, on: { click: close } },
+        h('div', { class: 'grow' }, h('div', { class: 'name' }, r.nombre_completo), h('div', { class: 'meta' }, r.barrio ? h('span', {}, r.barrio) : null, r.atrasado ? h('span', { class: 'late' }, r.dias_atraso + ' d de atraso') : null, staff && r.cobrador_id ? h('span', {}, nombreDe(r.cobrador_id)) : null)),
+        h('div', { class: 'amt' }, money(r[campo])))))
+    : h('p', { class: 'muted' }, 'No hay registros.'));
+}
 function fila(r, staff) {
   const debe = Number(r.valor_a_cobrar || 0);
   const st = debe > 0 ? (r.atrasado ? 's-late' : 's-hoy') : (r.pagado_hoy ? 's-ok' : '');
@@ -114,7 +124,7 @@ export async function tarjeta(ctx) {
   }
   const hoy = hoyCO();
   const staff = isStaff();
-  ctx.setTop(cli.nombre_completo, { back: staff ? '#/prestamos' : '#/ruta', sub: cap(pr.modalidad) + ' · ' + (pr.estado === 'ACTIVO' ? 'Activo' : pr.estado.toLowerCase()) });
+  ctx.setTop(cli.nombre_completo, { back: staff ? '#/prestamos' : '#/ruta', sub: cap(pr.modalidad) + (staff && pr.tipo_operacion && pr.tipo_operacion !== 'NUEVO' ? ' · ' + TIPOS[pr.tipo_operacion] : '') + ' · ' + (pr.estado === 'ACTIVO' ? 'Activo' : pr.estado.toLowerCase()) });
 
   const pend = cuotas.filter((c) => c.estado !== 'PAGADA');
   const debeHoy = pend.filter((c) => c.fecha_programada <= hoy).reduce((a, c) => a + Number(c.saldo_cuota), 0);
@@ -161,16 +171,32 @@ export async function tarjeta(ctx) {
         h('div', {}, fdate(p.fecha_pago) + ' · ' + ftime(p.hora_pago), ' ', h('span', { class: 'tag' + (p.metodo === 'EFECTIVO' ? '' : ' ok') }, p.metodo === 'EFECTIVO' ? 'Efectivo' : 'Transferencia')),
         p.observacion ? h('div', { class: 'small muted' }, p.observacion) : null),
       h('div', { class: 'amt' + (anul ? ' void' : '') }, money(p.valor)),
-      staff && !anul ? h('button', { class: 'icon-btn', style: { color: 'var(--bad)' }, 'aria-label': 'Anular pago', on: { click: () => anular(p, ctx) } }, icon('trash', 20)) : null);
+      staff && !anul ? h('button', { class: 'icon-btn', style: { color: 'var(--warn, var(--bad))' }, 'aria-label': 'Anular pago', title: 'Anular', on: { click: () => anular(p, ctx) } }, icon('close', 20)) : null,
+      staff ? h('button', { class: 'icon-btn', style: { color: 'var(--bad)' }, 'aria-label': 'Eliminar pago', title: 'Eliminar', on: { click: () => confirmarEliminar({ titulo: 'Eliminar pago de ' + money(p.valor), texto: 'El pago se borra por completo y el saldo del cliente se restablece. Si fue por transferencia o en una caja cerrada, el dinero se reversa en las cuentas.', onOk: async (m) => { await q(sb.rpc('eliminar_pago', { p_pago: p.id, p_motivo: m })); toast('Pago eliminado'); ctx.refresh(); } }) } }, icon('trash', 20)) : null);
   }) : h('p', { class: 'muted' }, 'Todavía no hay pagos registrados.'));
 
+  // El cobrador solo ve las cuotas (sin valor prestado, interés, fechas de desembolso ni saldos del préstamo)
+  const listaCuotas = h('div', { class: 'panel' }, cuotas.map((c) => {
+    const late = c.estado !== 'PAGADA' && c.fecha_programada < hoy;
+    const etiqueta = c.estado === 'PAGADA' ? 'Pagada' : c.estado === 'PARCIAL' ? 'Abonada ' + money(c.valor_pagado) : late ? 'Atrasada' : c.fecha_programada === hoy ? 'Hoy' : 'Pendiente';
+    const cls = c.estado === 'PAGADA' ? 'ok' : c.estado === 'PARCIAL' ? 'warn' : late ? 'bad' : '';
+    return h('div', { class: 'line' },
+      h('div', { class: 'grow' }, h('b', {}, 'Cuota ' + c.numero), h('div', { class: 'small muted' }, fdate(c.fecha_programada))),
+      h('span', { class: 'tag ' + cls }, etiqueta),
+      h('div', { class: 'amt', style: { minWidth: '84px', textAlign: 'right' } }, money(c.valor_programado)));
+  }));
   view.replaceChildren(h('div', { class: 'stack' },
-    hero, prog, kv,
-    h('div', { class: 'section' }, h('h3', {}, 'Cuotas'), grid),
-    h('div', { class: 'section' }, h('h3', {}, 'Pagos'), hist),
-    staff ? h('div', { class: 'row' },
+    hero, prog,
+    staff ? kv : null,
+    h('div', { class: 'section' }, h('h3', {}, 'Cuotas'), staff ? grid : listaCuotas),
+    staff ? h('div', { class: 'section' }, h('h3', {}, 'Pagos'), hist) : null,
+    staff ? h('div', { class: 'row', style: { flexWrap: 'wrap', gap: '8px' } },
       h('a', { class: 'btn small', href: '#/cliente/' + cli.id }, 'Ver cliente'),
-      h('a', { class: 'btn small', href: '#/prestamo-nuevo?cliente=' + cli.id }, 'Nuevo préstamo')) : null,
+      pr.estado === 'PAGADO' ? h('a', { class: 'btn small primary', href: '#/prestamo-nuevo?tipo=RENOVACION&anterior=' + pr.id }, 'Renovar') : null,
+      pr.estado === 'ACTIVO' && Number(pr.saldo) > 0 ? h('a', { class: 'btn small', href: '#/prestamo-nuevo?tipo=REFINANCIACION&anterior=' + pr.id }, 'Refinanciar') : null,
+      pr.estado === 'ACTIVO' || pr.estado === 'PAGADO' ? h('a', { class: 'btn small', href: '#/prestamo-nuevo?cliente=' + cli.id }, 'Nuevo préstamo') : null,
+      h('button', { class: 'btn small', on: { click: () => opciones(pr, ctx) } }, 'Papelería / comisión'),
+      h('button', { class: 'btn small danger', on: { click: () => confirmarEliminar({ titulo: 'Eliminar préstamo', texto: 'Se elimina el préstamo con sus cuotas y pagos, y se reversan los movimientos de dinero (desembolso, papelería, cobros). Esta acción no se puede deshacer.', onOk: async (m) => { await q(sb.rpc('eliminar_prestamo', { p_prestamo: pr.id, p_motivo: m })); toast('Préstamo eliminado'); location.hash = '#/prestamos'; } }) } }, 'Eliminar préstamo')) : null,
     pr.estado === 'ACTIVO' ? h('div', { class: 'actionbar' }, h('button', { class: 'btn primary block', on: { click: () => abrirCobro(ctx, pr, debeHoy, cuotas) } }, icon('cash'), 'Registrar cobro')) : null));
 }
 const kvc = (k, v) => h('div', {}, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v));
@@ -227,4 +253,17 @@ function anular(p, ctx) {
       await q(sb.rpc('anular_pago', { p_pago: p.id, p_motivo: motivo.value.trim() }));
       close(); toast('Pago anulado'); ctx.refresh();
     }) } }, 'Anular pago')));
+}
+
+function opciones(pr, ctx) {
+  const dinero = pr.tipo_operacion === 'NUEVO' || pr.tipo_operacion === 'RENOVACION';
+  const pap = segmented([['SI', 'Sí'], ['NO', 'No']], pr.descuenta_papeleria ? 'SI' : 'NO');
+  const com = segmented([['SI', 'Sí'], ['NO', 'No']], pr.paga_comision ? 'SI' : 'NO');
+  sheet('Papelería y comisión', (close) => h('div', {},
+    dinero ? h('div', { class: 'field' }, h('label', {}, 'Descontar papelería al cliente'), pap, h('p', { class: 'hint' }, 'Solo aplica a préstamos nuevos y renovados.')) : h('p', { class: 'hint', style: { marginBottom: '14px' } }, 'Los préstamos migrados o refinanciados no llevan papelería.'),
+    h('div', { class: 'field' }, h('label', {}, 'Pagar comisión al cobrador'), com),
+    h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+      await q(sb.rpc('editar_prestamo_opciones', { p_prestamo: pr.id, p_descuenta_papeleria: dinero ? pap.get() === 'SI' : null, p_paga_comision: com.get() === 'SI' }));
+      close(); toast('Cambios guardados'); ctx.refresh();
+    }) } }, 'Guardar')));
 }

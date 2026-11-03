@@ -164,16 +164,19 @@ export async function prestamoNuevo(ctx) {
   const cuenta = selectEl(cuentasOk.map((c) => [c.id, c.nombre]));
   const medio = segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; });
   const cuentaBox = h('div', { style: { display: 'none' } }, field('Cuenta de la que sale', cuenta));
+  const descPap = segmented([['SI', 'Sí, descontar'], ['NO', 'No descontar']], 'SI', () => calc());
+  const pagaCom = segmented([['SI', 'Sí, pagar'], ['NO', 'No pagar']], 'SI');
   const prev = h('div', { class: 'panel' });
 
   function calc() {
     const v = moneyVal(valor), p = Number(pct.value), n = Number(cuotas.value);
     if (!v || pct.value === '' || !n) { prev.replaceChildren(h('p', { class: 'muted' }, 'Completa valor, interés y cuotas para ver el resumen.')); return null; }
-    const pap = Math.round(v * pctPap / 100), ent = v - pap, int = Math.round(v * p / 100), tot = v + int, cuota = Math.round(tot / n);
+    const conPap = descPap.get() === 'SI';
+    const pap = conPap ? Math.round(v * pctPap / 100) : 0, ent = v - pap, int = Math.round(v * p / 100), tot = v + int, cuota = Math.round(tot / n);
     const cal = calendario(mod.value, primerPago(mod.value, fecha.value), n, omite);
     prev.replaceChildren(
       h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Valor prestado'), h('span', { class: 'amt' }, money(v))),
-      h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Papelería (' + pctPap + ' %)'), h('span', { class: 'amt' }, money(pap))),
+      h('div', { class: 'line' }, h('span', { class: 'grow' }, conPap ? 'Papelería (' + pctPap + ' %)' : 'Papelería (no se descuenta)'), h('span', { class: 'amt' }, money(pap))),
       h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Se entrega al cliente'), h('b', { class: 'amt' }, money(ent))),
       h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Interés (' + p + ' %)'), h('span', { class: 'amt' }, money(int))),
       h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Total a cobrar'), h('b', { class: 'amt' }, money(tot))),
@@ -190,7 +193,7 @@ export async function prestamoNuevo(ctx) {
     const r = calc();
     if (!r) throw new Error('Completa el valor, el interés y el número de cuotas.');
     if (medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No hay cuentas disponibles para el desembolso.');
-    const id = await q(sb.rpc('crear_prestamo', { p_cliente: elegido.id, p_valor: r.v, p_porcentaje: r.p, p_modalidad: mod.value, p_cuotas: r.n, p_cuenta: medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: medio.get(), p_fecha_desembolso: fecha.value }));
+    const id = await q(sb.rpc('crear_prestamo', { p_cliente: elegido.id, p_valor: r.v, p_porcentaje: r.p, p_modalidad: mod.value, p_cuotas: r.n, p_cuenta: medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: medio.get(), p_fecha_desembolso: fecha.value, p_descuenta_papeleria: descPap.get() === 'SI', p_paga_comision: pagaCom.get() === 'SI' }));
     toast('Préstamo creado'); location.hash = '#/prestamo/' + id;
   }) } }, 'Crear préstamo');
 
@@ -199,7 +202,9 @@ export async function prestamoNuevo(ctx) {
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Condiciones'),
       field('Valor prestado', valor), h('div', { class: 'grid2' }, field('Interés (%)', pct, 'Lo define quien presta'), field('Número de cuotas', cuotas)),
       h('div', { class: 'grid2' }, field('Modalidad de cobro', mod), field('Fecha de desembolso', fecha)),
-      h('div', { class: 'field' }, h('label', {}, 'Cómo se entrega el dinero'), medio), cuentaBox),
+      h('div', { class: 'field' }, h('label', {}, 'Cómo se entrega el dinero'), medio), cuentaBox,
+      h('div', { class: 'field' }, h('label', {}, 'Papelería al cliente (' + pctPap + ' %)'), descPap),
+      h('div', { class: 'field' }, h('label', {}, 'Comisión para el cobrador'), pagaCom, h('p', { class: 'hint' }, 'Si eliges "No pagar", este préstamo no suma a la comisión de la liquidación.'))),
     h('div', { class: 'section' }, h('h3', {}, 'Resumen'), prev), crear));
   pintarPick(); calc();
 }

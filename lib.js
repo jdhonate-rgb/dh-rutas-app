@@ -176,3 +176,13 @@ export function empty(title, text, action) {
 export function skeleton(n = 4) {
   return h('div', { class: 'skel-list' }, Array.from({ length: n }, () => h('div', { class: 'skel' })));
 }
+
+// Confirmación para eliminar: pide un motivo opcional y ejecuta onOk(motivo).
+export function confirmarEliminar({ titulo, texto, boton = 'Eliminar', onOk }) {
+  return sheet(titulo, (close) => {
+    const motivo = h('textarea', { rows: '2', placeholder: 'Motivo (opcional)', 'aria-label': 'Motivo' });
+    const ok = h('button', { class: 'btn danger block', type: 'button', on: { click: (e) => busy(e.currentTarget, async () => { await onOk(clean(motivo.value) || null); close(); }) } }, boton);
+    return h('div', { class: 'stack' }, h('p', {}, texto), h('div', { class: 'field' }, motivo), ok,
+      h('button', { class: 'btn block', type: 'button', on: { click: close } }, 'Cancelar'));
+  });
+}
