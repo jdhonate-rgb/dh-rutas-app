@@ -1,6 +1,6 @@
 // Clientes, préstamos y cuadre de caja (supervisión y administración).
 import { h, clear, icon, money, fdate, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, addDays, addMonths, num, clean, confirmarEliminar } from './lib.js';
-import { S, sb, q, isAdmin, nombreDe, cfgNum } from './state.js';
+import { S, sb, q, isAdmin, isStaff, nombreDe, cfgNum } from './state.js';
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 const cap = (s) => (s ? s[0] + s.slice(1).toLowerCase() : '');
@@ -127,6 +127,8 @@ function calendario(mod, primero, n, omiteDomingo) {
 export async function prestamoNuevo(ctx) {
   const { view } = ctx;
   const qa = ctx.query.anterior || null;
+  const cobr = !isStaff();   // el cobrador solo puede renovar o refinanciar un préstamo de su ruta
+  if (cobr && !qa) { location.hash = '#/ruta'; return; }
   let tipo = qa ? (ctx.query.tipo === 'REFINANCIACION' ? 'REFINANCIACION' : 'RENOVACION') : (ctx.query.tipo === 'MIGRACION' ? 'MIGRACION' : 'NUEVO');
   const TITULO = { NUEVO: 'Nuevo préstamo', MIGRACION: 'Migrar préstamo', RENOVACION: 'Renovar préstamo', REFINANCIACION: 'Refinanciar préstamo' };
   ctx.setTop(TITULO[tipo], { back: qa ? '#/prestamo/' + qa : '#/prestamos' });
@@ -242,15 +244,15 @@ export async function prestamoNuevo(ctx) {
     if (!elegido) throw new Error('Elige el cliente.');
     const r = calc();
     if (!r) throw new Error('Completa los datos del préstamo.');
-    if (conDinero() && medio.get() === 'EFECTIVO' && entrega.get() === 'SI' && !(moneyVal(entMonto) > 0)) throw new Error('Escribe el dinero entregado al cobrador.');
+    if (!cobr && conDinero() && medio.get() === 'EFECTIVO' && entrega.get() === 'SI' && !(moneyVal(entMonto) > 0)) throw new Error('Escribe el dinero entregado al cobrador.');
     if (conDinero() && medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No hay cuentas disponibles para el desembolso.');
     const id = await q(sb.rpc('crear_prestamo', {
       p_cliente: elegido.id, p_valor: r.v, p_porcentaje: r.p, p_modalidad: mod.value, p_cuotas: r.n,
-      p_cuenta: conDinero() && medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: conDinero() ? medio.get() : 'EFECTIVO',
-      p_fecha_desembolso: fecha.value, p_anterior: qa, p_tipo: tipo, p_ya_pagado: r.ya,
-      p_descuenta_papeleria: conDinero() ? descPap.get() === 'SI' : null, p_paga_comision: pagaCom.get() === 'SI',
+      p_cuenta: !cobr && conDinero() && medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: !cobr && conDinero() ? medio.get() : 'EFECTIVO',
+      p_fecha_desembolso: cobr ? hoyCO() : fecha.value, p_anterior: qa, p_tipo: tipo, p_ya_pagado: r.ya,
+      p_descuenta_papeleria: !cobr && conDinero() ? descPap.get() === 'SI' : null, p_paga_comision: cobr ? null : pagaCom.get() === 'SI',
       p_fecha_primer_pago: primer.value || null,
-      p_entrega_cobrador: conDinero() && medio.get() === 'EFECTIVO' && entrega.get() === 'SI' ? moneyVal(entMonto) : null }));
+      p_entrega_cobrador: !cobr && conDinero() && medio.get() === 'EFECTIVO' && entrega.get() === 'SI' ? moneyVal(entMonto) : null }));
     toast({ NUEVO: 'Préstamo creado', MIGRACION: 'Préstamo migrado', RENOVACION: 'Préstamo renovado', REFINANCIACION: 'Préstamo refinanciado' }[tipo]); location.hash = '#/prestamo/' + id;
   }) } }, 'Guardar préstamo');
 
@@ -266,6 +268,11 @@ export async function prestamoNuevo(ctx) {
       h('div', { class: 'field' }, h('label', {}, 'Comisión para el cobrador'), pagaCom, h('p', { class: 'hint' }, 'Si eliges "No pagar", este préstamo no suma a la comisión de la liquidación.'))),
     h('div', { class: 'section' }, h('h3', {}, 'Resumen'), prev), crear));
   aplicarTipo(); syncPrimer(); pintarPick(); calc();
+  if (cobr) {
+    // El cobrador define interés, cuotas y modalidad; el desembolso es en efectivo, hoy, y queda en su caja
+    bFecha.style.display = 'none'; bDinero.style.display = 'none'; pagaCom.parentElement.style.display = 'none';
+    if (tipo === 'RENOVACION') info.append(h('p', { class: 'hint panelnote' }, 'El dinero lo llevas tú: queda registrado como entrega en tu caja de hoy.'));
+  }
 }
 
 // ---------------------------------------------------------------- Caja

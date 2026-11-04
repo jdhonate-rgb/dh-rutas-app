@@ -287,3 +287,59 @@ body.noscroll { overflow: hidden; }
 .dr-ver { color: #8FA6DD; font-size: 12px; margin-top: 6px; }
 @media (max-width: 899px) { .nav { display: none; } main#view { padding-bottom: calc(var(--safe-b) + 28px); } .fab { bottom: calc(20px + var(--safe-b)); } .actionbar { bottom: 0; } }
 @media (min-width: 900px) { .menu-btn, .scrim, .drawer { display: none; } }
+
+/* ---------- Reportes ---------- */
+main#view:has(.rep-pagina) { max-width: 1500px; }
+.rep-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.rep-kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; }
+.rep-kpi span { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.rep-kpi b { font-size: 19px; letter-spacing: -.01em; }
+.rep-kpi.mal b { color: var(--bad); }
+.rep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
+.rep-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 6px; color: var(--text); text-decoration: none; }
+.rep-card:active { background: var(--info-soft); }
+.rep-card b { font-size: 16px; }
+.rep-card span { font-size: 13px; color: var(--muted); line-height: 1.35; }
+.rep-card .ic { color: var(--info); }
+.rep-filtros { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; }
+.rep-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+.rep-campo { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 700; color: var(--muted); }
+.rep-campo input, .rep-campo select { min-height: 42px; border: 1.5px solid var(--line); border-radius: 10px; padding: 0 10px; background: var(--paper); color: var(--text); font: inherit; font-weight: 500; }
+.rep-atajos { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.rep-acciones { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.rep-doc { background: #fff; color: #111; border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
+.rep-emp { font-weight: 800; color: #1F3A5F; font-size: 14px; letter-spacing: .04em; text-transform: uppercase; }
+.rep-doc h2 { font-size: 22px; margin: 2px 0 4px; color: #1F3A5F; }
+.rep-meta { font-size: 12px; color: #555; }
+.rep-nota { font-size: 12px; color: #444; background: #F4F5F7; border-left: 3px solid #1F3A5F; padding: 8px 10px; margin: 12px 0 0; }
+.rep-scroll { overflow-x: auto; margin-top: 12px; }
+.rep-tabla { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+.rep-tabla th { background: #1F3A5F; color: #fff; padding: 7px 8px; font-weight: 700; text-align: left; vertical-align: middle; position: sticky; top: 0; }
+.rep-tabla td { padding: 6px 8px; border-bottom: 1px solid #E1E5EF; white-space: nowrap; }
+.rep-tabla tbody tr:nth-child(even) td { background: #F6F7FB; }
+.rep-tabla .r { text-align: right; } .rep-tabla .c { text-align: center; }
+.rep-tabla td.neg { color: #B3261E; font-weight: 700; }
+.rep-tabla tfoot td { background: #E8EEF7; font-weight: 800; border-top: 2px solid #1F3A5F; }
+.rep-extra { margin-top: 22px; max-width: 900px; }
+.rep-extra h3 { font-size: 14px; color: #1F3A5F; margin: 0; }
+.rep-total { text-align: right; font-size: 13px; margin-top: 6px; }
+.rep-vacio, .rep-fin { color: #888; font-style: italic; font-size: 13px; margin-top: 16px; }
+.rep-fin { text-align: center; font-size: 11px; }
+
+@media print {
+  @page { size: letter landscape; margin: 10mm; }
+  html, body { background: #fff !important; color: #000 !important; }
+  .top, .nav, .drawer, .scrim, .no-print, .fab, .actionbar, #toast, .toasts { display: none !important; }
+  #app { padding-left: 0 !important; }
+  main#view { max-width: none !important; padding: 0 !important; margin: 0 !important; }
+  .rep-doc { border: 0; padding: 0; }
+  .rep-scroll { overflow: visible; }
+  .rep-tabla { font-size: 8.5px; }
+  .rep-tabla th, .rep-tabla td { padding: 3px 4px; }
+  .rep-tabla th { position: static; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .rep-tabla td { white-space: normal; }
+  .rep-tabla tr { page-break-inside: avoid; }
+  .rep-tabla thead { display: table-header-group; }
+  .rep-tabla tfoot td, .rep-tabla tbody tr:nth-child(even) td, .rep-nota { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .rep-extra { page-break-inside: avoid; }
+}

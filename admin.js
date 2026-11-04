@@ -8,7 +8,7 @@ export function mas(ctx) {
   const admin = isAdmin();
   ctx.view.replaceChildren(h('div', { class: 'stack' },
     h('div', { class: 'tiles' },
-      t('#/clientes', 'users', 'Clientes'), t('#/gastos', 'receipt', 'Gastos'), t('#/resumen', 'chart', 'Resumen del día'), t('#/liquidaciones', 'wallet', 'Liquidaciones'), t('#/actividad', 'list', 'Actividad')),
+      t('#/clientes', 'users', 'Clientes'), t('#/gastos', 'receipt', 'Gastos'), t('#/resumen', 'chart', 'Resumen del día'), t('#/liquidaciones', 'wallet', 'Liquidaciones'), t('#/reportes', 'file', 'Reportes'), t('#/actividad', 'list', 'Actividad')),
     admin ? h('div', { class: 'section' }, h('h3', {}, 'Administración'), h('div', { class: 'tiles' },
       t('#/usuarios', 'user', 'Usuarios'), t('#/rutas', 'route', 'Rutas'), t('#/config', 'sliders', 'Configuración'))) : null,
     cuentaSesion(ctx)))

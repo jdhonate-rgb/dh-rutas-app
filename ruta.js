@@ -198,14 +198,18 @@ export async function tarjeta(ctx) {
   }));
   view.replaceChildren(h('div', { class: 'stack' },
     hero, prog,
-    staff ? kv : null,
-    h('div', { class: 'section' }, h('h3', {}, 'Cuotas'), staff ? grid : listaCuotas),
-    staff ? h('div', { class: 'section' }, h('h3', {}, 'Pagos'), hist) : null,
+    kv,
+    h('div', { class: 'section' }, h('h3', {}, 'Cuotas'), grid),
+    h('div', { class: 'section' }, h('h3', {}, 'Pagos'), hist),
+    !staff ? h('div', { class: 'row', style: { flexWrap: 'wrap', gap: '8px' } },
+      pr.estado === 'PAGADO' ? h('a', { class: 'btn small primary', href: '#/prestamo-nuevo?tipo=RENOVACION&anterior=' + pr.id }, 'Renovar') : null,
+      pr.estado === 'ACTIVO' && Number(pr.saldo) > 0 ? h('a', { class: 'btn small', href: '#/prestamo-nuevo?tipo=REFINANCIACION&anterior=' + pr.id }, 'Refinanciar') : null) : null,
     staff ? h('div', { class: 'row', style: { flexWrap: 'wrap', gap: '8px' } },
       h('a', { class: 'btn small', href: '#/cliente/' + cli.id }, 'Ver cliente'),
       pr.estado === 'PAGADO' ? h('a', { class: 'btn small primary', href: '#/prestamo-nuevo?tipo=RENOVACION&anterior=' + pr.id }, 'Renovar') : null,
       pr.estado === 'ACTIVO' && Number(pr.saldo) > 0 ? h('a', { class: 'btn small', href: '#/prestamo-nuevo?tipo=REFINANCIACION&anterior=' + pr.id }, 'Refinanciar') : null,
       pr.estado === 'ACTIVO' || pr.estado === 'PAGADO' ? h('a', { class: 'btn small', href: '#/prestamo-nuevo?cliente=' + cli.id }, 'Nuevo préstamo') : null,
+      h('button', { class: 'btn small', on: { click: () => editarFechas(pr, ctx) } }, 'Editar fechas'),
       h('button', { class: 'btn small', on: { click: () => opciones(pr, ctx) } }, 'Papelería / comisión'),
       h('button', { class: 'btn small danger', on: { click: () => confirmarEliminar({ titulo: 'Eliminar préstamo', texto: 'Se elimina el préstamo con sus cuotas y pagos, y se reversan los movimientos de dinero (desembolso, papelería, cobros). Esta acción no se puede deshacer.', onOk: async (m) => { await q(sb.rpc('eliminar_prestamo', { p_prestamo: pr.id, p_motivo: m })); toast('Préstamo eliminado'); location.hash = '#/prestamos'; } }) } }, 'Eliminar préstamo')) : null,
     pr.estado === 'ACTIVO' ? h('div', { class: 'actionbar' }, h('button', { class: 'btn primary block', on: { click: () => abrirCobro(ctx, pr, debeHoy, cuotas) } }, icon('cash'), 'Registrar cobro')) : null));
@@ -277,4 +281,19 @@ function opciones(pr, ctx) {
       await q(sb.rpc('editar_prestamo_opciones', { p_prestamo: pr.id, p_descuenta_papeleria: dinero ? pap.get() === 'SI' : null, p_paga_comision: com.get() === 'SI' }));
       close(); toast('Cambios guardados'); ctx.refresh();
     }) } }, 'Guardar')));
+}
+
+// Supervisora / administrador: corregir la fecha del préstamo y del primer cobro (las cuotas se recalculan; los cobros hechos se conservan)
+function editarFechas(pr, ctx) {
+  const fd = h('input', { type: 'date', value: pr.fecha_desembolso });
+  const fp = h('input', { type: 'date', value: pr.fecha_primer_pago });
+  sheet('Editar fechas del préstamo', (close) => h('div', { class: 'stack' },
+    h('p', { class: 'hint panelnote' }, 'Sirve para corregir un error de fecha. Las fechas de todas las cuotas se vuelven a calcular desde el primer cobro; lo que el cliente ya pagó no cambia.'),
+    field('Fecha del préstamo (desembolso)', fd),
+    field('Fecha del primer cobro', fp),
+    h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+      if (!fd.value || !fp.value) throw new Error('Escribe las dos fechas.');
+      await q(sb.rpc('editar_prestamo', { p_prestamo: pr.id, p_fecha_desembolso: fd.value, p_fecha_primer_pago: fp.value }));
+      toast('Fechas actualizadas'); close(); ctx.refresh();
+    }) } }, 'Guardar cambios')));
 }
