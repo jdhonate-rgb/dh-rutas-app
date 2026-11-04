@@ -142,10 +142,15 @@ async function resumenStaff(ctx) {
 const sum = (arr, k) => arr.reduce((a, r) => a + Number(r[k] || 0), 0);
 const statBtn = (l, v, cls, fn) => h('button', { type: 'button', class: 'stat tap ' + (cls || ''), on: { click: fn } }, h('div', { class: 'v' }, v), h('div', { class: 'l' }, l, ' ›'));
 function detallePagos(titulo, pagos, conQuien) {
+  const nomCta = (id) => (S.cuentas.find((c) => c.id === id) || {}).nombre || 'Cuenta';
+  const porCuenta = {};
+  pagos.filter((p) => p.metodo === 'TRANSFERENCIA').forEach((p) => { const k = nomCta(p.cuenta_destino_id); porCuenta[k] = (porCuenta[k] || 0) + Number(p.valor); });
   sheet(titulo + ' · ' + money(sum(pagos, 'valor')), (close) => pagos.length
-    ? h('div', { class: 'panel' }, pagos.map((p) => h('a', { class: 'line', href: '#/prestamo/' + p.prestamo_id, on: { click: close } },
-        h('div', { class: 'grow' }, h('b', {}, p.clientes ? p.clientes.nombre_completo : 'Cliente'), h('div', { class: 'small muted' }, ftime(p.hora_pago) + (conQuien ? ' · ' + nombreDe(p.cobrador_id) : '') + ' · ' + (p.metodo === 'EFECTIVO' ? 'Efectivo' : 'Transferencia'))),
-        h('div', { class: 'amt pos' }, money(p.valor)))))
+    ? h('div', { class: 'stack' },
+        h('div', { class: 'panel' }, pagos.map((p) => h('a', { class: 'line', href: '#/prestamo/' + p.prestamo_id, on: { click: close } },
+          h('div', { class: 'grow' }, h('b', {}, p.clientes ? p.clientes.nombre_completo : 'Cliente'), h('div', { class: 'small muted' }, ftime(p.hora_pago) + (conQuien ? ' · ' + nombreDe(p.cobrador_id) : '') + ' · ' + (p.metodo === 'EFECTIVO' ? 'Efectivo' : 'Transferencia' + (p.cuenta_destino_id ? ' a ' + nomCta(p.cuenta_destino_id) : '')))),
+          h('div', { class: 'amt pos' }, money(p.valor))))),
+        Object.keys(porCuenta).length ? h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Transferencias por cuenta'), Object.entries(porCuenta).map(([k, v]) => linea(k, money(v)))) : null)
     : empty('Sin cobros', 'Aquí aparecerán los clientes que te paguen.'));
 }
 function detalleFaltan(faltan) {

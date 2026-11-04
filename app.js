@@ -15,16 +15,18 @@ const ROUTES = [
   [/^#\/gastos$/, G.gastos, 'todos'], [/^#\/resumen$/, G.resumen, 'todos'],
   [/^#\/clientes$/, M.clientes, 'staff'], [/^#\/cliente\/([^/?]+)$/, M.cliente, 'staff'],
   [/^#\/prestamos$/, M.prestamos, 'staff'], [/^#\/prestamo-nuevo$/, M.prestamoNuevo, 'staff'], [/^#\/caja$/, M.caja, 'staff'],
-  [/^#\/cuentas$/, F.cuentas, 'staff'], [/^#\/cuenta\/([^/?]+)$/, F.cuenta, 'staff'],
+  [/^#\/cuentas$/, F.cuentas, 'ver'], [/^#\/cuenta\/([^/?]+)$/, F.cuenta, 'ver'],
   [/^#\/liquidaciones$/, F.liquidaciones, 'staff'], [/^#\/liquidacion\/([^/?]+)$/, F.liquidacion, 'staff'],
-  [/^#\/mas$/, A.mas, 'staff'],
+  [/^#\/mas$/, A.mas, 'staff'], [/^#\/actividad$/, A.actividad, 'staff'],
   [/^#\/usuarios$/, A.usuarios, 'admin'], [/^#\/rutas$/, A.rutas, 'admin'], [/^#\/config$/, A.config, 'admin']
 ];
-const MAS_GRUPO = /^#\/(mas|clientes|cliente|gastos|resumen|liquidaciones|liquidacion|usuarios|rutas|config)/;
+const MAS_GRUPO = /^#\/(mas|clientes|cliente|gastos|resumen|liquidaciones|liquidacion|actividad|usuarios|rutas|config)/;
 
 function navItems() {
   if (isStaff()) return [['#/ruta', 'route', 'Ruta'], ['#/caja', 'box', 'Caja'], ['#/prestamos', 'cash', 'Préstamos'], ['#/cuentas', 'bank', 'Cuentas'], ['#/mas', 'grid', 'Más']];
-  return [['#/ruta', 'route', 'Ruta'], ['#/gastos', 'receipt', 'Gastos'], ['#/resumen', 'chart', 'Resumen']];
+  const base = [['#/ruta', 'route', 'Ruta'], ['#/gastos', 'receipt', 'Gastos'], ['#/resumen', 'chart', 'Resumen']];
+  if (S.profile && S.profile.ver_cuentas) base.splice(2, 0, ['#/cuentas', 'bank', 'Cuentas']);
+  return base;
 }
 
 function marca(size) {
@@ -66,7 +68,7 @@ async function render() {
   const query = Object.fromEntries(new URLSearchParams(qs || ''));
   let hit = null, params = [];
   for (const [re, fn, rol] of ROUTES) { const m = re.exec(path); if (m) { hit = { fn, rol }; params = m.slice(1); break; } }
-  const permitido = hit && (hit.rol === 'todos' || (hit.rol === 'staff' && isStaff()) || (hit.rol === 'admin' && isAdmin()));
+  const permitido = hit && (hit.rol === 'todos' || (hit.rol === 'staff' && isStaff()) || (hit.rol === 'ver' && (isStaff() || S.profile.ver_cuentas)) || (hit.rol === 'admin' && isAdmin()));
   if (!permitido) { location.hash = '#/ruta'; return; }
   pintarNav();
   window.scrollTo(0, 0);

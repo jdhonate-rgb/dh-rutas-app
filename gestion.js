@@ -169,10 +169,19 @@ export async function prestamoNuevo(ctx) {
   const mod = selectEl([['DIARIO', 'Diario'], ['SEMANAL', 'Semanal'], ['QUINCENAL', 'Quincenal'], ['MENSUAL', 'Mensual']], ant ? ant.modalidad : 'DIARIO');
   const cuotas = h('input', { type: 'number', inputmode: 'numeric', min: '1', max: '120', placeholder: '24' });
   const fecha = h('input', { type: 'date', value: hoyCO() });
+  const primer = h('input', { type: 'date' });
+  let primerManual = false; let lastEnt = 0;
+  const defPrimer = () => primerPago(mod.value, fecha.value);
+  const syncPrimer = () => { if (!primerManual) primer.value = defPrimer(); };
+  primer.addEventListener('input', () => { primerManual = true; });
+  const volver = h('button', { type: 'button', class: 'btn small', on: { click: () => { primerManual = false; syncPrimer(); calc(); } } }, 'Usar la fecha por defecto');
+  const entrega = segmented([['NO', 'No'], ['SI', 'Sí, el cobrador lo lleva']], 'NO', (v) => { entBox.style.display = v === 'SI' ? '' : 'none'; if (v === 'SI' && !moneyVal(entMonto) && lastEnt) entMonto.value = num(lastEnt); calc(); });
+  const entMonto = moneyInput({ 'aria-label': 'Dinero entregado al cobrador' });
+  const entBox = h('div', { style: { display: 'none' } }, field('Dinero entregado al cobrador para este préstamo', entMonto, 'Obligatorio. Entra a la caja abierta de hoy del cobrador y queda en el cuadre. Debe ser mínimo lo que recibe el cliente.'));
   const yaPag = moneyInput({ 'aria-label': 'Ya cobrado' });
   const cuentasOk = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
   const cuenta = selectEl(cuentasOk.map((c) => [c.id, c.nombre]));
-  const medio = segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; });
+  const medio = segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; const e = document.getElementById('bEntrega'); if (e) e.style.display = v === 'TRANSFERENCIA' ? 'none' : ''; if (v === 'TRANSFERENCIA') { setSeg(entrega, 'NO'); entBox.style.display = 'none'; } });
   const cuentaBox = h('div', { style: { display: 'none' } }, field('Cuenta de la que sale', cuenta));
   const descPap = segmented([['SI', 'Sí, descontar'], ['NO', 'No descontar']], 'SI', () => calc());
   const pagaCom = segmented([['SI', 'Sí, pagar'], ['NO', 'No pagar']], conDinero() ? 'SI' : 'NO');
@@ -183,6 +192,7 @@ export async function prestamoNuevo(ctx) {
   const bValor = field('Valor prestado', valor);
   const bYa = h('div', {}, field('Ya cobrado hasta hoy', yaPag, 'Lo que el cliente ya pagó de este préstamo. No mueve dinero de las cuentas.'));
   const bDinero = h('div', {}, h('div', { class: 'field' }, h('label', {}, 'Cómo se entrega el dinero'), medio), cuentaBox,
+    h('div', { class: 'field', id: 'bEntrega' }, h('label', {}, '¿El dinero se lo lleva el cobrador al cliente?'), entrega), entBox,
     h('div', { class: 'field' }, h('label', {}, 'Papelería al cliente (' + pctPap + ' %)'), descPap, h('p', { class: 'hint' }, 'Se descuenta al entregar el dinero, pero la deuda del cliente no baja.')));
   const lblFecha = h('label', {}, 'Fecha de desembolso');
   const bFecha = h('div', { class: 'field' }, lblFecha, fecha);
@@ -205,9 +215,10 @@ export async function prestamoNuevo(ctx) {
     if (!v || pct.value === '' || !n) { prev.replaceChildren(h('p', { class: 'muted' }, 'Completa ' + (tipo === 'REFINANCIACION' ? 'interés y cuotas' : 'valor, interés y cuotas') + ' para ver el resumen.')); return null; }
     const conPap = conDinero() && descPap.get() === 'SI';
     const pap = conPap ? Math.round(v * pctPap / 100) : 0, ent = v - pap, int = Math.round(v * p / 100), tot = v + int, cuota = Math.round(tot / n);
+    lastEnt = ent;
     const ya = tipo === 'MIGRACION' ? moneyVal(yaPag) : 0;
     if (ya >= tot) { prev.replaceChildren(h('p', { class: 'err' }, 'Lo ya cobrado (' + money(ya) + ') debe ser menor al total a cobrar (' + money(tot) + ').')); return null; }
-    const cal = calendario(mod.value, primerPago(mod.value, fecha.value), n, omite);
+    const cal = calendario(mod.value, primer.value || defPrimer(), n, omite);
     const L = (a, b, bold) => h('div', { class: 'line' }, h(bold ? 'b' : 'span', { class: 'grow' }, a), h(bold ? 'b' : 'span', { class: 'amt' }, b));
     prev.replaceChildren(...[
       L(tipo === 'REFINANCIACION' ? 'Saldo que se refinancia' : 'Valor prestado', money(v)),
@@ -219,22 +230,27 @@ export async function prestamoNuevo(ctx) {
       ya ? L('Saldo pendiente', money(tot - ya), true) : null,
       L(n + ' cuotas de', money(cuota)),
       L(tipo === 'MIGRACION' ? 'Primera cuota' : 'Primer cobro', fdate(cal[0])),
+      entrega.get() === 'SI' && conDinero() ? L('Entregado al cobrador', money(moneyVal(entMonto) || 0)) : null,
       L('Última cuota', fdate(cal[cal.length - 1]))].filter(Boolean));
     return { v, p, n, ya };
   }
-  [valor, pct, cuotas, fecha, yaPag].forEach((e) => e.addEventListener('input', calc));
-  mod.addEventListener('change', calc);
+  [valor, pct, cuotas, yaPag, primer, entMonto].forEach((e) => e.addEventListener('input', calc));
+  fecha.addEventListener('input', () => { syncPrimer(); calc(); });
+  mod.addEventListener('change', () => { syncPrimer(); calc(); });
 
   const crear = h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
     if (!elegido) throw new Error('Elige el cliente.');
     const r = calc();
     if (!r) throw new Error('Completa los datos del préstamo.');
+    if (conDinero() && medio.get() === 'EFECTIVO' && entrega.get() === 'SI' && !(moneyVal(entMonto) > 0)) throw new Error('Escribe el dinero entregado al cobrador.');
     if (conDinero() && medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No hay cuentas disponibles para el desembolso.');
     const id = await q(sb.rpc('crear_prestamo', {
       p_cliente: elegido.id, p_valor: r.v, p_porcentaje: r.p, p_modalidad: mod.value, p_cuotas: r.n,
       p_cuenta: conDinero() && medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: conDinero() ? medio.get() : 'EFECTIVO',
       p_fecha_desembolso: fecha.value, p_anterior: qa, p_tipo: tipo, p_ya_pagado: r.ya,
-      p_descuenta_papeleria: conDinero() ? descPap.get() === 'SI' : null, p_paga_comision: pagaCom.get() === 'SI' }));
+      p_descuenta_papeleria: conDinero() ? descPap.get() === 'SI' : null, p_paga_comision: pagaCom.get() === 'SI',
+      p_fecha_primer_pago: primer.value || null,
+      p_entrega_cobrador: conDinero() && medio.get() === 'EFECTIVO' && entrega.get() === 'SI' ? moneyVal(entMonto) : null }));
     toast({ NUEVO: 'Préstamo creado', MIGRACION: 'Préstamo migrado', RENOVACION: 'Préstamo renovado', REFINANCIACION: 'Préstamo refinanciado' }[tipo]); location.hash = '#/prestamo/' + id;
   }) } }, 'Guardar préstamo');
 
@@ -245,10 +261,11 @@ export async function prestamoNuevo(ctx) {
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Condiciones'),
       bValor, h('div', { class: 'grid2' }, field('Interés (%)', pct, 'Lo define quien presta'), field('Número de cuotas', cuotas)),
       h('div', { class: 'grid2' }, field('Modalidad de cobro', mod), bFecha),
+      h('div', { class: 'field' }, h('label', {}, 'Fecha del primer cobro'), primer, h('p', { class: 'hint' }, 'Sale la que corresponde según la modalidad; si quieres otra, cámbiala. ', volver)),
       bYa, bDinero,
       h('div', { class: 'field' }, h('label', {}, 'Comisión para el cobrador'), pagaCom, h('p', { class: 'hint' }, 'Si eliges "No pagar", este préstamo no suma a la comisión de la liquidación.'))),
     h('div', { class: 'section' }, h('h3', {}, 'Resumen'), prev), crear));
-  aplicarTipo(); pintarPick(); calc();
+  aplicarTipo(); syncPrimer(); pintarPick(); calc();
 }
 
 // ---------------------------------------------------------------- Caja
@@ -264,30 +281,34 @@ export async function caja(ctx) {
     out.replaceChildren(skeleton(3));
     const d = dia.value;
     try {
-      const [cajas, pagos, gastos] = await Promise.all([
+      const [cajas, pagos, gastos, ents] = await Promise.all([
         q(sb.from('cajas').select('*').eq('fecha', d)),
         q(sb.from('pagos').select('cobrador_id,valor,metodo,caja_id').eq('fecha_pago', d).eq('estado_pago', 'VIGENTE')),
-        q(sb.from('gastos').select('usuario_id,valor,metodo').eq('fecha', d).eq('metodo', 'EFECTIVO'))
+        q(sb.from('gastos').select('usuario_id,valor,metodo').eq('fecha', d).eq('metodo', 'EFECTIVO')),
+        q(sb.from('caja_entregas').select('*,cajas!inner(fecha,cobrador_id),prestamos(clientes(nombre_completo))').eq('cajas.fecha', d))
       ]);
       const cobs = S.profiles.filter((p) => p.rol === 'COBRADOR' && p.estado === 'ACTIVO');
       if (!cobs.length) { out.replaceChildren(empty('No hay cobradores activos', 'Activa a los cobradores desde Usuarios.')); return; }
-      out.replaceChildren(h('div', { class: 'stack' }, cobs.map((c) => tarjetaCaja(c, cajas.find((x) => x.cobrador_id === c.id), pagos.filter((p) => p.cobrador_id === c.id), gastos.filter((g) => g.usuario_id === c.id), d))));
+      out.replaceChildren(h('div', { class: 'stack' }, cobs.map((c) => tarjetaCaja(c, cajas.find((x) => x.cobrador_id === c.id), pagos.filter((p) => p.cobrador_id === c.id), gastos.filter((g) => g.usuario_id === c.id), d, ents.filter((e) => e.cajas.cobrador_id === c.id)))));
     } catch (e) { fail(e); out.replaceChildren(empty('No se pudo cargar la caja', 'Inténtalo de nuevo.')); }
   }
 
-  function tarjetaCaja(c, cj, pagos, gastos, d) {
+  function tarjetaCaja(c, cj, pagos, gastos, d, ents) {
     const ef = sum(pagos.filter((p) => p.metodo === 'EFECTIVO' && (!cj || cj.estado === 'ABIERTA' ? !p.caja_id : p.caja_id === cj.id)), 'valor');
     const tr = sum(pagos.filter((p) => p.metodo === 'TRANSFERENCIA'), 'valor');
     const gs = sum(gastos, 'valor');
     const cerrada = cj && cj.estado === 'CERRADA';
     const base = cj ? Number(cj.base_inicial) : 0;
-    const esperado = cerrada ? Number(cj.total_esperado) : base + ef - gs;
+    const entM = sum(ents, 'monto'), entC = sum(ents, 'valor_cliente');
+    const esperado = cerrada ? Number(cj.total_esperado) : base + entM - entC + ef - gs;
     const cuerpo = [];
     if (!cj) {
       cuerpo.push(h('p', { class: 'muted', style: { margin: '10px 0' } }, 'Aún no se ha abierto la caja de este cobrador.'),
         h('button', { class: 'btn primary block', on: { click: () => abrir(c, d) } }, 'Abrir caja'));
     } else {
-      cuerpo.push(h('div', { class: 'kv', style: { marginTop: '10px' } }, kvc('Base entregada', money(base)), kvc('Cobros en efectivo', money(cerrada ? cj.total_cobros_efectivo : ef)), kvc('Gastos en efectivo', money(cerrada ? cj.total_gastos : gs)), kvc('Transferencias', money(tr))),
+      cuerpo.push(h('div', { class: 'kv', style: { marginTop: '10px' } }, kvc('Base entregada', money(base)), kvc('Cobros en efectivo', money(cerrada ? cj.total_cobros_efectivo : ef)), kvc('Gastos en efectivo', money(cerrada ? cj.total_gastos : gs)), kvc('Transferencias', money(tr)),
+          ents.length ? kvc('Entregado al cobrador para préstamos', money(entM)) : null, ents.length ? kvc('Entregado a clientes', '− ' + money(entC)) : null),
+        ents.length ? h('div', { class: 'small muted', style: { margin: '6px 2px' } }, ents.map((e) => ((e.prestamos && e.prestamos.clientes && e.prestamos.clientes.nombre_completo) || 'Cliente') + ' ' + money(e.monto)).join(' · ')) : null,
         h('div', { class: 'line', style: { marginTop: '6px' } }, h('b', { class: 'grow' }, 'Efectivo esperado'), h('b', { class: 'amt' }, money(esperado))));
       if (cerrada) {
         const df = Number(cj.diferencia);
@@ -296,11 +317,27 @@ export async function caja(ctx) {
         cuerpo.push(h('button', { class: 'btn primary block', style: { marginTop: '8px' }, on: { click: () => cerrar(cj, esperado, c) } }, 'Cerrar caja'));
       }
     }
+    if (cj) cuerpo.push(h('div', { class: 'row', style: { gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
+      h('button', { class: 'btn small', on: { click: () => editarCaja(c, cj) } }, 'Editar caja'),
+      cerrada ? h('button', { class: 'btn small', on: { click: () => confirmarEliminar({ titulo: 'Reabrir caja de ' + c.nombre, texto: 'La caja vuelve a estado abierto y el cobrador puede trabajar de nuevo. Se reversan los movimientos del cierre; luego la cierras otra vez.', boton: 'Reabrir caja', onOk: async () => { await q(sb.rpc('reabrir_caja', { p_caja: cj.id })); toast('Caja reabierta'); cargar(); } }) } }, 'Reabrir caja') : null));
     if (cj) cuerpo.push(h('button', { class: 'btn danger small block', style: { marginTop: '8px' }, on: { click: () => confirmarEliminar({ titulo: 'Eliminar caja de ' + c.nombre, texto: 'Se elimina esta caja y se reversan sus movimientos de efectivo (base y entrega). Los cobros del día quedan sin caja.', onOk: async (m) => { await q(sb.rpc('eliminar_caja', { p_caja: cj.id, p_motivo: m })); toast('Caja eliminada'); cargar(); } }) } }, 'Eliminar caja'));
     return h('div', { class: 'panel' }, h('div', { class: 'row between' }, h('b', { style: { fontSize: '18px' } }, c.nombre), h('span', { class: 'tag ' + (cerrada ? 'ok' : cj ? 'warn' : '') }, cerrada ? 'Cerrada' : cj ? 'Abierta' : 'Sin abrir')), cuerpo);
   }
   const kvc = (k, v) => h('div', {}, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v));
 
+  function editarCaja(c, cj) {
+    const cerrada = cj.estado === 'CERRADA';
+    const base = moneyInput({ 'aria-label': 'Base' }); base.value = num(cj.base_inicial);
+    const ent = moneyInput({ 'aria-label': 'Dinero entregado' }); if (cerrada) ent.value = num(cj.dinero_entregado);
+    const obs = h('textarea', { placeholder: 'Opcional' }); obs.value = cj.observacion || '';
+    sheet('Editar caja de ' + c.nombre, (close) => h('div', {},
+      h('p', { class: 'muted', style: { marginBottom: '12px' } }, cerrada ? 'La caja está cerrada: al guardar se recalcula el cuadre con los valores nuevos.' : 'Cambia la base entregada o la nota.'),
+      field('Base entregada', base), cerrada ? field('Dinero entregado por el cobrador', ent) : null, field('Nota', obs),
+      h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+        await q(sb.rpc('editar_caja', { p_caja: cj.id, p_base: moneyVal(base), p_entregado: cerrada ? moneyVal(ent) : null, p_obs: obs.value.trim() || null }));
+        close(); toast('Caja actualizada'); cargar();
+      }) } }, 'Guardar cambios')));
+  }
   function abrir(c, d) {
     const base = moneyInput({ 'aria-label': 'Base' });
     sheet('Abrir caja de ' + c.nombre, (close) => h('div', {},

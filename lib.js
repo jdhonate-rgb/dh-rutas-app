@@ -53,6 +53,7 @@ const P = {
   file: '<path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/>',
   wallet: '<path d="M4 8a2 2 0 0 1 2-2h12v3"/><rect x="4" y="8" width="16" height="11" rx="2.5"/><path d="M16 13.5h2"/>',
   trash: '<path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13"/>',
+  list: '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/>',
   edit: '<path d="M4 20l1-4L16.500 4.500a2 2 0 0 1 3 3L8 19z"/>'
 };
 export function icon(name, size = 22) {

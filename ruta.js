@@ -14,7 +14,18 @@ export async function ruta(ctx) {
   ctx.setTop('Ruta', { sub: fdate(hoyCO(), true), actions: [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }] });
   view.replaceChildren(skeleton(5));
   let rows;
-  try { rows = await q(sb.from('v_ruta').select('*').order('nombre_completo')); }
+  try {
+    if (!isStaff()) {
+      const cj = await q(sb.from('cajas').select('id,estado').eq('fecha', hoyCO()));
+      if (!cj.length || cj[0].estado !== 'ABIERTA') {
+        view.replaceChildren(empty(cj.length ? 'Tu caja está cerrada' : 'Tu caja aún no está abierta',
+          cj.length ? 'Ya cerraste cuentas por hoy. Mañana la supervisora abrirá tu caja y podrás ver la ruta.' : 'La supervisora debe abrir tu caja del día para que veas la ruta y registres cobros.',
+          h('a', { class: 'btn', href: '#/resumen' }, 'Ver resumen del día')));
+        return;
+      }
+    }
+    rows = await q(sb.from('v_ruta').select('*').order('nombre_completo'));
+  }
   catch (e) {
     fail(e);
     view.replaceChildren(empty('No se pudo cargar la ruta', 'Revisa tu conexión e inténtalo de nuevo.', h('button', { class: 'btn', on: { click: () => ctx.refresh() } }, 'Reintentar')));

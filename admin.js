@@ -1,5 +1,5 @@
 // Administración (solo administrador): usuarios, rutas y configuración. Más el menú "Más".
-import { h, icon, money, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, clean } from './lib.js';
+import { h, icon, money, fdate, ftime, hoyCO, addDays, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, clean } from './lib.js';
 import { S, sb, q, isAdmin, cargarApoyo } from './state.js';
 
 export function mas(ctx) {
@@ -8,7 +8,7 @@ export function mas(ctx) {
   const admin = isAdmin();
   ctx.view.replaceChildren(h('div', { class: 'stack' },
     h('div', { class: 'tiles' },
-      t('#/clientes', 'users', 'Clientes'), t('#/gastos', 'receipt', 'Gastos'), t('#/resumen', 'chart', 'Resumen del día'), t('#/liquidaciones', 'wallet', 'Liquidaciones')),
+      t('#/clientes', 'users', 'Clientes'), t('#/gastos', 'receipt', 'Gastos'), t('#/resumen', 'chart', 'Resumen del día'), t('#/liquidaciones', 'wallet', 'Liquidaciones'), t('#/actividad', 'list', 'Actividad')),
     admin ? h('div', { class: 'section' }, h('h3', {}, 'Administración'), h('div', { class: 'tiles' },
       t('#/usuarios', 'user', 'Usuarios'), t('#/rutas', 'route', 'Rutas'), t('#/config', 'sliders', 'Configuración'))) : null,
     cuentaSesion(ctx)))
@@ -113,4 +113,29 @@ export async function config(ctx) {
       }
       await cargarApoyo(); toast('Configuración guardada');
     }) } }, 'Guardar'))));
+}
+
+// Actividad: todo lo que hacen los usuarios y mueve valores (préstamos, cobros, gastos, cajas, retiros, transferencias…)
+export async function actividad(ctx) {
+  const { view } = ctx;
+  ctx.setTop('Actividad', { back: '#/mas', actions: [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }] });
+  try { await cargarApoyo(); } catch (e) { fail(e); }
+  const desde = h('input', { type: 'date', value: addDays(hoyCO(), -7) });
+  const hasta = h('input', { type: 'date', value: hoyCO() });
+  const quien = selectEl([['', 'Todos los usuarios'], ...S.profiles.filter((p) => p.estado === 'ACTIVO').map((p) => [p.id, p.nombre])], '');
+  const out = h('div', {});
+  [desde, hasta, quien].forEach((e) => e.addEventListener('change', () => cargar()));
+  view.replaceChildren(h('div', { class: 'stack' }, h('div', { class: 'grid2' }, field('Desde', desde), field('Hasta', hasta)), field('Usuario', quien), out));
+  async function cargar() {
+    out.replaceChildren(skeleton(4));
+    try {
+      const rows = await q(sb.rpc('actividad', { p_desde: desde.value, p_hasta: hasta.value, p_usuario: quien.value || null }));
+      if (!rows.length) { out.replaceChildren(empty('Sin movimientos en este rango', 'Aquí aparece todo lo que se registra: préstamos, cobros, gastos, cajas, retiros y transferencias.')); return; }
+      out.replaceChildren(h('div', { class: 'panel' }, rows.map((r) => h('div', { class: 'line' },
+        h('div', { class: 'grow' }, h('b', {}, r.accion), r.detalle ? h('div', { class: 'small' }, r.detalle) : null,
+          h('div', { class: 'small muted' }, fdate(new Date(r.fecha_hora).toLocaleDateString('sv-SE', { timeZone: 'America/Bogota' })) + ' ' + ftime(r.fecha_hora) + ' · ' + r.usuario)),
+        r.monto != null ? h('div', { class: 'amt' }, money(r.monto)) : null))));
+    } catch (e) { fail(e); out.replaceChildren(empty('No se pudo cargar', 'Inténtalo de nuevo.')); }
+  }
+  cargar();
 }

@@ -28,6 +28,9 @@ export async function cargarApoyo() {
   S.cfg = Object.fromEntries(cfg.map((r) => [r.clave, r.valor]));
   S.profiles = profiles;
   S.rutas = rutas;
-  try { S.cuentas = await q(sb.from('cuentas').select('id,codigo,nombre,tipo,activa').eq('activa', true).order('nombre')); }
-  catch { S.cuentas = []; }
+  try {
+    S.cuentas = isStaff() || (S.profile && S.profile.ver_cuentas)
+      ? await q(sb.from('cuentas').select('id,codigo,nombre,tipo,activa').eq('activa', true).order('nombre'))
+      : await q(sb.rpc('mis_cuentas_cobro'));   // cobrador sin permiso de cuentas: solo su cuenta de recaudo
+  } catch { S.cuentas = []; }
 }
