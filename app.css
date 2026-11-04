@@ -259,3 +259,31 @@ a.line { color: inherit; text-decoration: none; }
 .kvbtn { text-align: left; font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 .kvbtn .k { color: var(--info); }
 .line.tap:active { background: var(--info-soft); }
+
+/* ---------- Menú lateral oscuro (celular) ---------- */
+.menu-btn { margin-left: -8px; }
+.scrim { position: fixed; inset: 0; background: rgba(4,10,28,.55); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 60; }
+.scrim.open { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; width: min(82vw, 330px); z-index: 70; color: #fff; display: flex; flex-direction: column;
+  background: linear-gradient(180deg, #0B1B3F 0%, #0A1330 100%); transform: translateX(-102%); transition: transform .22s ease;
+  padding: calc(18px + env(safe-area-inset-top, 0px)) 0 calc(14px + env(safe-area-inset-bottom, 0px)); overflow-y: auto; box-shadow: 8px 0 30px rgba(0,0,0,.35);
+}
+.drawer.open { transform: none; }
+body.noscroll { overflow: hidden; }
+.dr-head { text-align: center; padding: 6px 20px 14px; }
+.dr-head .ic svg { filter: drop-shadow(0 0 0 transparent); border-radius: 50%; box-shadow: 0 0 0 3px #0A1330, 0 0 0 5px #4F7BE8; }
+.dr-app { font-weight: 900; letter-spacing: .14em; font-size: 20px; margin-top: 12px; color: #fff; }
+.dr-tag { font-size: 12px; color: #8FA6DD; letter-spacing: .06em; margin-top: 2px; }
+.dr-hola { padding: 14px 22px 12px; font-weight: 800; font-size: 17px; border-top: 1px solid rgba(255,255,255,.08); }
+.dr-hola small { display: block; font-size: 11.5px; font-weight: 700; color: #5B8DEF; letter-spacing: .05em; margin-top: 3px; }
+.dr-items { flex: 1; padding: 4px 0; }
+.dr-items a { display: flex; align-items: center; gap: 16px; padding: 14px 22px; color: #E6ECFA; text-decoration: none; font-weight: 700; font-size: 14.5px; letter-spacing: .02em; text-transform: uppercase; border-bottom: 1px solid rgba(255,255,255,.07); }
+.dr-items a .ic { color: #5B8DEF; }
+.dr-items a.on { background: rgba(91,141,239,.16); box-shadow: inset 4px 0 0 #FFC72C; }
+.dr-items a:active { background: rgba(255,255,255,.08); }
+.dr-foot { text-align: center; padding: 12px 20px 0; }
+.dr-salir { display: inline-flex; align-items: center; gap: 10px; background: none; border: 0; color: #5B8DEF; font-weight: 800; letter-spacing: .08em; font-size: 15px; padding: 10px 14px; }
+.dr-ver { color: #8FA6DD; font-size: 12px; margin-top: 6px; }
+@media (max-width: 899px) { .nav { display: none; } main#view { padding-bottom: calc(var(--safe-b) + 28px); } .fab { bottom: calc(20px + var(--safe-b)); } .actionbar { bottom: 0; } }
+@media (min-width: 900px) { .menu-btn, .scrim, .drawer { display: none; } }

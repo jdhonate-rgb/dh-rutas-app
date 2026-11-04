@@ -104,6 +104,8 @@ export async function config(ctx) {
     inputs[k] = yn ? selectEl([['SI', 'Sí'], ['NO', 'No']], S.cfg[k] || 'NO') : h('input', { type: 'text', inputmode: 'decimal', value: S.cfg[k] || '' });
     return field(t, inputs[k], d);
   });
+  const empresa = h('input', { type: 'text', value: S.cfg.EMPRESA_NOMBRE || '', placeholder: 'Ej.: Las Flores', maxlength: '60' });
+  campos.unshift(field('Nombre de la empresa', empresa, 'Aparece en el menú de la app.'));
   view.replaceChildren(h('div', { class: 'stack' }, h('div', { class: 'panel' }, campos,
     h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
       for (const k of Object.keys(CFG)) {
@@ -111,6 +113,7 @@ export async function config(ctx) {
         if (!v) throw new Error('Completa todos los valores.');
         await q(sb.from('configuracion').update({ valor: v }).eq('clave', k));
       }
+      await q(sb.from('configuracion').upsert({ clave: 'EMPRESA_NOMBRE', valor: clean(empresa.value), descripcion: 'Nombre de la empresa que usa la app' }));
       await cargarApoyo(); toast('Configuración guardada');
     }) } }, 'Guardar'))));
 }

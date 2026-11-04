@@ -29,6 +29,31 @@ function navItems() {
   return base;
 }
 
+function itemsMenu() {
+  if (isStaff()) {
+    const m = [['#/ruta', 'route', 'Ruta'], ['#/caja', 'box', 'Caja'], ['#/prestamos', 'cash', 'Préstamos'], ['#/clientes', 'users', 'Clientes'], ['#/cuentas', 'bank', 'Cuentas'],
+      ['#/gastos', 'receipt', 'Gastos'], ['#/resumen', 'chart', 'Resumen del día'], ['#/liquidaciones', 'wallet', 'Liquidaciones'], ['#/actividad', 'list', 'Actividad']];
+    if (isAdmin()) m.push(['#/usuarios', 'user', 'Usuarios'], ['#/rutas', 'route', 'Rutas'], ['#/config', 'sliders', 'Configuración']);
+    return m;
+  }
+  return navItems().map(([href, ic, label]) => [href, ic, label === 'Resumen' ? 'Resumen del día' : label]);
+}
+let drawer, scrim;
+function abrirMenu(v) { drawer.classList.toggle('open', v); scrim.classList.toggle('open', v); document.body.classList.toggle('noscroll', v); }
+function pintarMenu() {
+  const hash = location.hash || '#/ruta';
+  const rol = { ADMINISTRADOR: 'Administrador', SUPERVISOR: 'Supervisor', COBRADOR: 'Cobrador' }[S.profile.rol];
+  const empresa = (S.cfg.EMPRESA_NOMBRE || '').trim();
+  drawer.replaceChildren(
+    h('div', { class: 'dr-head' }, marca(76), h('div', { class: 'dr-app' }, 'DH RUTAS'), h('div', { class: 'dr-tag' }, 'Cobros · Caja · Cartera')),
+    h('div', { class: 'dr-hola' }, 'Hola, ' + S.profile.nombre, h('small', {}, (empresa ? empresa.toUpperCase() + ' · ' : '') + rol.toUpperCase())),
+    h('div', { class: 'dr-items' }, itemsMenu().map(([href, ic, label]) => {
+      const on = hash === href || hash.startsWith(href + '/') || hash.startsWith(href + '?') || (href === '#/ruta' && hash.startsWith('#/prestamo/') && !isStaff()) || (href === '#/prestamos' && /^#\/prestamo(-nuevo|\/)/.test(hash) && isStaff()) || (href === '#/clientes' && hash.startsWith('#/cliente/'));
+      return h('a', { href, class: on ? 'on' : '' }, icon(ic, 22), label);
+    })),
+    h('div', { class: 'dr-foot' }, h('button', { class: 'dr-salir', on: { click: () => { abrirMenu(false); salir(); } } }, icon('logout', 22), 'SALIR'), h('div', { class: 'dr-ver' }, 'v2.0')));
+}
+
 function marca(size) {
   const s = h('span', { class: 'ic' });
   s.innerHTML = `<svg viewBox="0 0 64 64" width="${size}" height="${size}" aria-hidden="true"><rect width="64" height="64" rx="15" fill="#0F2557"/><rect x="8" y="20" width="48" height="24" rx="6" fill="#FFC72C" stroke="#fff" stroke-width="2"/><text x="32" y="38.5" text-anchor="middle" font-family="system-ui,Arial,sans-serif" font-weight="900" font-size="17" fill="#0F2557">DH</text></svg>`;
@@ -42,7 +67,9 @@ function shell() {
   const off = h('div', { class: 'offline', role: 'status', hidden: true }, 'Sin conexión. Los cobros no se guardan hasta que vuelva el internet.');
   const sync = () => { off.hidden = navigator.onLine; };
   window.addEventListener('online', sync); window.addEventListener('offline', sync); sync();
-  root.replaceChildren(off, top, view, nav);
+  scrim = h('div', { class: 'scrim', on: { click: () => abrirMenu(false) } });
+  drawer = h('aside', { class: 'drawer', 'aria-label': 'Menú' });
+  root.replaceChildren(off, top, view, nav, scrim, drawer);
 }
 
 function pintarNav() {
@@ -56,6 +83,7 @@ function pintarNav() {
 function setTop(title, o = {}) {
   document.title = title + ' · DH Rutas';
   top.replaceChildren(...[
+    h('button', { class: 'icon-btn menu-btn', 'aria-label': 'Menú', on: { click: () => abrirMenu(true) } }, icon('menu')),
     o.back ? h('a', { class: 'icon-btn', href: o.back, 'aria-label': 'Volver' }, icon('back')) : null,
     h('h1', {}, title, o.sub ? h('span', { class: 'sub' }, o.sub) : null),
     ...(o.actions || []).map((a) => h('button', { class: 'icon-btn', 'aria-label': a.label, on: { click: a.fn } }, icon(a.icon)))].filter(Boolean));
@@ -70,7 +98,7 @@ async function render() {
   for (const [re, fn, rol] of ROUTES) { const m = re.exec(path); if (m) { hit = { fn, rol }; params = m.slice(1); break; } }
   const permitido = hit && (hit.rol === 'todos' || (hit.rol === 'staff' && isStaff()) || (hit.rol === 'ver' && (isStaff() || S.profile.ver_cuentas)) || (hit.rol === 'admin' && isAdmin()));
   if (!permitido) { location.hash = '#/ruta'; return; }
-  pintarNav();
+  pintarNav(); pintarMenu(); abrirMenu(false);
   window.scrollTo(0, 0);
   const ctx = { view, params, query, setTop, refresh: render, salir, go: (hsh) => { location.hash = hsh; } };
   try { await hit.fn(ctx); }

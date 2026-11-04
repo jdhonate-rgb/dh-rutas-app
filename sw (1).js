@@ -1,5 +1,5 @@
 // Guarda la app en el teléfono para que abra rápido. Los datos siempre vienen de internet.
-const VERSION = 'dhrutas-v4';
+const VERSION = 'dhrutas-v5';
 const SHELL = ['./', 'index.html', 'app.css', 'app.js', 'lib.js', 'state.js', 'ruta.js', 'gastos.js', 'gestion.js', 'finanzas.js', 'admin.js', 'config.js', 'supabase.js', 'manifest.webmanifest', 'icon-192.png'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
