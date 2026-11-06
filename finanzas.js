@@ -1,6 +1,6 @@
 // Cuentas (incluye efectivo de oficina) y liquidaciones de cobradores.
 import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, num, addDays } from './lib.js';
-import { S, sb, q, isAdmin, isStaff, nombreDe } from './state.js';
+import { S, sb, q, isAdmin, isStaff, nombreDe, esCob } from './state.js';
 
 const sum = (arr, k) => arr.reduce((a, r) => a + Number(r[k] || 0), 0);
 const TIPO_ICON = { EFECTIVO: 'cash', NEQUI: 'wallet', BANCARIA: 'bank', PAPELERIA: 'file' };
@@ -84,6 +84,7 @@ export async function cuenta(ctx) {
       h('p', { class: 'hint' }, 'Es parte del saldo de la cuenta; solo se muestra aparte de forma informativa.')) : null,
     isStaff() ? h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } },
       h('button', { class: 'btn small', on: { click: () => ingreso([info], info.id, ctx) } }, icon('plus', 18), 'Ingreso'),
+      isAdmin() ? h('button', { class: 'btn small', on: { click: () => saldoInicial(info, ctx) } }, icon('edit', 18), 'Saldo inicial') : null,
       h('button', { class: 'btn small', on: { click: () => retirarCuenta(todas, info.id, ctx) } }, 'Retirar'),
       h('button', { class: 'btn small', on: { click: () => transferir(todas, info.id, ctx) } }, 'Transferir')) : null,
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Movimientos'), chips, h('div', { class: 'grid2' }, field('Desde', desde), field('Hasta', hasta)), rango),
@@ -228,6 +229,20 @@ function retirarPapeleria(conFondo, nomCta, ctx) {
     }) } }, 'Registrar retiro')));
 }
 
+// Saldo inicial de una cuenta: solo el administrador (la base de datos también lo exige)
+function saldoInicial(info, ctx) {
+  if (!isAdmin()) return;
+  const val = moneyInput({ 'aria-label': 'Saldo inicial' }); val.value = num(info.saldo_inicial);
+  const fecha = h('input', { type: 'date', value: hoyCO() });
+  sheet('Saldo inicial · ' + info.nombre, (close) => h('div', {},
+    h('p', { class: 'muted small', style: { marginBottom: '12px' } }, 'Es el dinero con el que empieza esta cuenta, antes de cualquier movimiento. El saldo actual se recalcula con este valor. Solo el administrador puede cambiarlo.'),
+    field('Saldo inicial', val), field('Fecha del saldo inicial', fecha),
+    h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+      await q(sb.rpc('fijar_saldo_inicial', { p_cuenta: info.id, p_valor: moneyVal(val), p_fecha: fecha.value || hoyCO() }));
+      close(); toast('Saldo inicial actualizado'); ctx.refresh();
+    }) } }, 'Guardar saldo inicial')));
+}
+
 function nuevaCuenta(ctx) {
   const nombre = h('input', { type: 'text', placeholder: 'Ej.: Nequi 3' });
   const tipo = selectEl([['NEQUI', 'Nequi'], ['BANCARIA', 'Cuenta bancaria'], ['EFECTIVO', 'Efectivo'], ['PAPELERIA', 'Papelería']], 'NEQUI');
@@ -237,6 +252,7 @@ function nuevaCuenta(ctx) {
       if (!nombre.value.trim()) throw new Error('Escribe el nombre de la cuenta.');
       await q(sb.from('cuentas').insert({ nombre: nombre.value.trim(), tipo: tipo.value, saldo_inicial: moneyVal(saldo), fecha_saldo_inicial: hoyCO() }));
       S.cuentas = await q(sb.from('cuentas').select('id,codigo,nombre,tipo,activa').eq('activa', true).order('nombre'));
+      S.cuentasCobro = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
       close(); toast('Cuenta creada'); ctx.refresh();
     }) } }, 'Crear cuenta')));
 }
@@ -256,7 +272,7 @@ export async function liquidaciones(ctx) {
     h('button', { class: 'btn primary fab', on: { click: () => nuevaLiq() } }, icon('plus'), 'Nueva liquidación')));
 
   function nuevaLiq() {
-    const cobs = S.profiles.filter((p) => p.rol === 'COBRADOR' && p.estado === 'ACTIVO');
+    const cobs = S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO');
     const cob = selectEl(cobs.map((c) => [c.id, c.nombre]));
     const ini = h('input', { type: 'date', value: inicioSemana(hoyCO()) }); const fin = h('input', { type: 'date', value: hoyCO() });
     sheet('Nueva liquidación', (close) => h('div', {},

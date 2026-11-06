@@ -1,6 +1,6 @@
 // Reportes para imprimir (PDF) y exportar a Excel. Solo administrador y supervisor.
 import { h, icon, money, num, hoyCO, addDays, inicioSemana, fail, empty, skeleton, busy, toast } from './lib.js';
-import { S, sb, q } from './state.js';
+import { S, sb, q, esCob } from './state.js';
 import { crearXlsx, descargar } from './xlsx.js';
 
 // ------------------------------------------------------------ utilidades
@@ -302,7 +302,7 @@ const ETQ = { desde: 'Desde', hasta: 'Hasta', cobrador: 'Cobrador', ruta: 'Ruta'
 
 function opciones(k, cat) {
   if (OPC[k]) return OPC[k];
-  if (k === 'cobrador') return [['', 'Todos'], ...S.profiles.filter((p) => p.rol === 'COBRADOR').map((p) => [p.id, p.nombre])];
+  if (k === 'cobrador') return [['', 'Todos'], ...S.profiles.filter((p) => esCob(p)).map((p) => [p.id, p.nombre])];
   if (k === 'ruta') return [['', 'Todas'], ...S.rutas.map((r) => [r.id, r.nombre])];
   if (k === 'cuenta') return [['', 'Todas'], ...Object.values(cat.cuenta).filter((c) => c.tipo !== 'PAPELERIA').map((c) => [c.id, c.nombre])];
   return [];

@@ -15,6 +15,7 @@ export async function q(p) {
 
 export const isStaff = () => ['ADMINISTRADOR', 'SUPERVISOR'].includes(S.profile && S.profile.rol);
 export const isAdmin = () => !!S.profile && S.profile.rol === 'ADMINISTRADOR';
+export const esCob = (p) => p.rol === 'COBRADOR' || !!p.es_cobrador;   // cobrador, o supervisor que también cobra su ruta
 export const nombreDe = (id) => { const p = S.profiles.find((x) => x.id === id); return p ? p.nombre : ''; };
 export const cfgNum = (k, d = 0) => (S.cfg[k] != null && S.cfg[k] !== '' ? Number(S.cfg[k]) : d);
 
@@ -22,7 +23,7 @@ export const cfgNum = (k, d = 0) => (S.cfg[k] != null && S.cfg[k] !== '' ? Numbe
 export async function cargarApoyo() {
   const [cfg, profiles, rutas] = await Promise.all([
     q(sb.from('configuracion').select('clave,valor')),
-    q(sb.from('profiles').select('id,nombre,email,telefono,rol,estado,ver_cuentas,cuenta_recaudo_id')),
+    q(sb.from('profiles').select('id,nombre,email,telefono,rol,estado,ver_cuentas,cuenta_recaudo_id,cuentas_permitidas,puede_desembolsar,es_cobrador')),
     q(sb.from('rutas').select('id,nombre,zona,descripcion,cobrador_id,estado').order('nombre'))
   ]);
   S.cfg = Object.fromEntries(cfg.map((r) => [r.clave, r.valor]));
@@ -33,4 +34,10 @@ export async function cargarApoyo() {
       ? await q(sb.from('cuentas').select('id,codigo,nombre,tipo,activa').eq('activa', true).order('nombre'))
       : await q(sb.rpc('mis_cuentas_cobro'));   // cobrador sin permiso de cuentas: solo su cuenta de recaudo
   } catch { S.cuentas = []; }
+  // cuentas en las que este usuario puede registrar cobros (y desembolsos, si es dueño): las que el administrador le habilitó
+  try {
+    S.cuentasCobro = isStaff()
+      ? S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA')
+      : (await q(sb.rpc('mis_cuentas_cobro'))).map((c) => ({ ...c, activa: true }));
+  } catch { S.cuentasCobro = []; }
 }

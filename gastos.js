@@ -1,6 +1,6 @@
 // Gastos y resumen del día.
 import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, addDays, confirmarEliminar } from './lib.js';
-import { S, sb, q, isStaff, nombreDe } from './state.js';
+import { S, sb, q, isStaff, nombreDe, esCob } from './state.js';
 import { cuentaSesion } from './admin.js';
 
 const CATS = ['Gasolina', 'Alimentación', 'Reparación de moto', 'Transporte', 'Papelería', 'Otros'];
@@ -117,7 +117,7 @@ async function resumenStaff(ctx) {
         dia.value === hoyCO() ? q(sb.from('v_ruta').select('cobrador_id,prestamo_id,nombre_completo,barrio,dias_atraso,valor_a_cobrar')) : Promise.resolve([]),
         q(sb.from('pagos').select('*,clientes(nombre_completo)').eq('fecha_pago', dia.value).eq('estado_pago', 'VIGENTE').order('hora_pago', { ascending: false }))
       ]);
-      const cobs = S.profiles.filter((p) => p.rol === 'COBRADOR' && p.estado === 'ACTIVO');
+      const cobs = S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO');
       const filas = cobs.map((c) => {
         const r = res.find((x) => x.cobrador_id === c.id) || {};
         const g = sum(gas.filter((x) => x.usuario_id === c.id && x.metodo === 'EFECTIVO'), 'valor');

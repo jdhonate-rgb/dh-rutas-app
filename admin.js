@@ -1,6 +1,6 @@
 // Administración (solo administrador): usuarios, rutas y configuración. Más el menú "Más".
 import { h, icon, money, fdate, ftime, hoyCO, addDays, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, clean } from './lib.js';
-import { S, sb, q, isAdmin, cargarApoyo } from './state.js';
+import { S, sb, q, isAdmin, cargarApoyo, esCob } from './state.js';
 
 export function mas(ctx) {
   ctx.setTop('Más');
@@ -44,14 +44,28 @@ function editar(p, ctx) {
   const ver = segmented([['SI', 'Puede ver cuentas'], ['NO', 'No ve cuentas']], p.ver_cuentas ? 'SI' : 'NO');
   const cuentas = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
   const rec = selectEl([['', 'Sin cuenta de recaudo'], ...cuentas.map((c) => [c.id, c.nombre])], p.cuenta_recaudo_id || '');
+  // Cuentas en las que este cobrador puede registrar cobros por transferencia (y desembolsos, si es dueño)
+  const marcadas = new Set(p.cuentas_permitidas || []);
+  const checks = cuentas.map((c) => { const cb = h('input', { type: 'checkbox', value: c.id, style: { width: '20px', height: '20px', flex: 'none' } }); cb.checked = marcadas.has(c.id); return [c, cb]; });
+  const cajaCuentas = h('div', { class: 'panel', style: { padding: '8px 12px' } }, checks.length
+    ? checks.map(([c, cb]) => h('div', { class: 'row', style: { display: 'flex', gap: '12px', padding: '10px 0', alignItems: 'center', cursor: 'pointer' }, on: { click: (e) => { if (e.target !== cb) cb.checked = !cb.checked; } } }, cb, h('span', { style: { fontWeight: '600' } }, c.nombre, h('span', { class: 'muted small' }, ' · ' + (c.tipo === 'NEQUI' ? 'Nequi' : 'Bancaria')))))
+    : h('p', { class: 'muted small' }, 'Aún no hay cuentas bancarias o Nequi creadas.'));
+  const cobra = segmented([['NO', 'No'], ['SI', 'Sí, también cobra una ruta']], p.es_cobrador ? 'SI' : 'NO');
+  const dueno = segmented([['NO', 'No'], ['SI', 'Sí, es dueño']], p.puede_desembolsar ? 'SI' : 'NO');
   sheet(p.nombre, (close) => h('div', {}, h('p', { class: 'muted small', style: { marginBottom: '12px' } }, p.email || ''),
     field('Nombre (como aparece en la app)', nombre), field('Teléfono', tel), field('Rol', rol),
     h('div', { class: 'field' }, h('label', {}, 'Estado'), estado), h('div', { class: 'field' }, h('label', {}, 'Cuentas'), ver),
+    h('div', { class: 'field' }, h('label', {}, 'Supervisor que también cobra'), cobra,
+      h('p', { class: 'hint' }, 'Solo para supervisores. Si es "Sí", aparece en la lista de cobradores: se le puede asignar una ruta, abrir su caja y ver su resumen, y su Ruta se abre en sus clientes.')),
     field('Cuenta de recaudo', rec, 'Donde entran las transferencias que cobre esta persona.'),
+    h('div', { class: 'field' }, h('label', {}, 'Cuentas habilitadas para cobros por transferencia'), cajaCuentas,
+      h('p', { class: 'hint' }, 'Solo podrá registrar cobros por transferencia en las cuentas marcadas (y en su cuenta de recaudo).')),
+    h('div', { class: 'field' }, h('label', {}, 'Puede desembolsar por transferencia'), dueno,
+      h('p', { class: 'hint' }, 'Para el dueño: al renovar puede entregar el dinero desde las cuentas marcadas. Si es "No", solo presta con el efectivo que tenga en su caja.')),
     h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
       if (!clean(nombre.value)) throw new Error('Escribe el nombre.');
       if (p.id === S.profile.id && (estado.get() !== 'ACTIVO' || rol.value !== 'ADMINISTRADOR')) throw new Error('No puedes quitarte tu propio acceso de administrador.');
-      await q(sb.from('profiles').update({ nombre: clean(nombre.value), telefono: clean(tel.value) || null, rol: rol.value, estado: estado.get(), ver_cuentas: ver.get() === 'SI', cuenta_recaudo_id: rec.value || null }).eq('id', p.id));
+      await q(sb.from('profiles').update({ nombre: clean(nombre.value), telefono: clean(tel.value) || null, rol: rol.value, estado: estado.get(), ver_cuentas: ver.get() === 'SI', cuenta_recaudo_id: rec.value || null, cuentas_permitidas: checks.filter(([, cb]) => cb.checked).map(([c]) => c.id), puede_desembolsar: dueno.get() === 'SI', es_cobrador: rol.value === 'SUPERVISOR' && cobra.get() === 'SI' }).eq('id', p.id));
       close(); toast('Usuario actualizado'); ctx.refresh();
     }) } }, 'Guardar')));
 }
@@ -71,7 +85,7 @@ export async function rutas(ctx) {
 function formRuta(r, ctx) {
   const nombre = h('input', { type: 'text', value: r ? r.nombre : '', placeholder: 'Ej.: Ruta 3' });
   const zona = h('input', { type: 'text', value: (r && r.zona) || '' });
-  const cob = selectEl([['', 'Sin cobrador'], ...S.profiles.filter((p) => p.rol === 'COBRADOR').map((p) => [p.id, p.nombre])], (r && r.cobrador_id) || '');
+  const cob = selectEl([['', 'Sin cobrador'], ...S.profiles.filter((p) => esCob(p)).map((p) => [p.id, p.nombre])], (r && r.cobrador_id) || '');
   const estado = segmented([['ACTIVA', 'Activa'], ['INACTIVA', 'Inactiva']], r ? r.estado : 'ACTIVA');
   sheet(r ? 'Editar ruta' : 'Nueva ruta', (close) => h('div', {}, field('Nombre', nombre), field('Zona', zona), field('Cobrador', cob, 'Los clientes de esta ruta se cobran por este cobrador.'), h('div', { class: 'field' }, h('label', {}, 'Estado'), estado),
     h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {

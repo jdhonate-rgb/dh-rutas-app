@@ -1,6 +1,6 @@
 // Ruta del cobrador, tarjeta del cliente (préstamo) y registro de cobros.
 import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, telDigits, hoyCO, num } from './lib.js';
-import { S, sb, q, isStaff, nombreDe } from './state.js';
+import { S, sb, q, isStaff, nombreDe, esCob } from './state.js';
 import { confirmarEliminar } from './lib.js';
 const TIPOS = { NUEVO: 'Nuevo', MIGRACION: 'Migración', RENOVACION: 'Renovación', REFINANCIACION: 'Refinanciado' };
 
@@ -33,6 +33,7 @@ export async function ruta(ctx) {
   }
 
   const staff = isStaff();
+  if (staff && S.profile.es_cobrador && !F.tocado) { F.cobrador = S.profile.id; F.tocado = true; }   // supervisor que también cobra: abre en su ruta
   const strip = h('div', { class: 'strip' });
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
   const list = h('div', { class: 'stack' });
@@ -43,7 +44,7 @@ export async function ruta(ctx) {
 
   let cobSel = null;
   if (staff) {
-    const cobs = S.profiles.filter((p) => p.rol === 'COBRADOR' && p.estado === 'ACTIVO');
+    const cobs = S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO');
     cobSel = selectEl([['TODOS', 'Todos los cobradores'], ...cobs.map((c) => [c.id, c.nombre])], F.cobrador, { 'aria-label': 'Cobrador', on: { change: (e) => { F.cobrador = e.target.value; pintarLista(); } } });
   }
 
@@ -223,8 +224,8 @@ function abrirCobro(ctx, pr, debeHoy, cuotas) {
   const poner = (v) => { monto.value = num(Math.min(v, saldo)); };
   poner(inicial);
   const metodo = segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; });
-  const cuentasOk = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
-  const cuenta = selectEl(cuentasOk.map((c) => [c.id, c.nombre]), S.profile.cuenta_recaudo_id || (cuentasOk[0] && cuentasOk[0].id));
+  const cuentasOk = S.cuentasCobro || [];   // solo las cuentas habilitadas para este usuario
+  const cuenta = selectEl(cuentasOk.map((c) => [c.id, c.nombre]), (cuentasOk.find((c) => c.id === S.profile.cuenta_recaudo_id) || cuentasOk[0] || {}).id);
   const cuentaBox = h('div', { style: { display: 'none' } },
     cuentasOk.length ? field('Cuenta donde entró el dinero', cuenta)
       : h('p', { class: 'hint', style: { marginBottom: '14px' } }, S.profile.cuenta_recaudo_id ? 'El dinero se acredita a tu cuenta de recaudo.' : 'No tienes cuenta de recaudo asignada. Pídele al administrador que la configure.'));
