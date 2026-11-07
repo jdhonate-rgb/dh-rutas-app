@@ -84,6 +84,29 @@ export async function cliente(ctx) {
       h('div', { class: 'row', style: { marginTop: '12px' } }, h('a', { class: 'btn', href: '#/prestamo-nuevo?cliente=' + id }, icon('plus'), 'Nuevo préstamo'), h('a', { class: 'btn', href: '#/prestamo-nuevo?tipo=MIGRACION&cliente=' + id }, 'Migrar préstamo')))));
 }
 
+// Cobrador con permiso: crea un cliente que queda en su ruta (RPC crear_cliente)
+export async function clienteNuevo(ctx) {
+  const { view } = ctx;
+  if (isStaff()) { location.hash = '#/cliente/nuevo'; return; }
+  if (!S.profile.puede_crear_clientes) { toast('No tienes permiso para crear clientes.'); location.hash = '#/ruta'; return; }
+  ctx.setTop('Nuevo cliente', { back: '#/ruta' });
+  const f = {
+    nombre: h('input', { type: 'text', autocomplete: 'off' }), doc: h('input', { type: 'text', inputmode: 'numeric' }),
+    tel: h('input', { type: 'tel' }), tel2: h('input', { type: 'tel' }), dir: h('input', { type: 'text' }),
+    barrio: h('input', { type: 'text' }), ref: h('input', { type: 'text' }), obs: h('textarea', {})
+  };
+  const guardar = h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+    if (!clean(f.nombre.value)) throw new Error('Escribe el nombre del cliente.');
+    const id = await q(sb.rpc('crear_cliente', { p_nombre: clean(f.nombre.value), p_documento: clean(f.doc.value) || null, p_telefono: clean(f.tel.value) || null,
+      p_telefono_2: clean(f.tel2.value) || null, p_direccion: clean(f.dir.value) || null, p_barrio: clean(f.barrio.value) || null, p_referencia: clean(f.ref.value) || null, p_observaciones: clean(f.obs.value) || null }));
+    toast('Cliente creado');
+    location.hash = S.profile.puede_crear_prestamos ? '#/prestamo-nuevo?cliente=' + id : '#/ruta';
+  }) } }, 'Crear cliente');
+  view.replaceChildren(h('div', { class: 'stack' }, h('div', { class: 'panel' }, field('Nombre completo', f.nombre), h('div', { class: 'grid2' }, field('Documento', f.doc), field('Teléfono', f.tel)),
+    field('Otro teléfono', f.tel2), field('Dirección', f.dir), h('div', { class: 'grid2' }, field('Barrio', f.barrio), field('Referencia', f.ref)), field('Observaciones', f.obs),
+    h('p', { class: 'hint' }, 'El cliente queda en tu ruta.')), guardar));
+}
+
 // ---------------------------------------------------------------- Préstamos
 export async function prestamos(ctx) {
   const { view } = ctx;
@@ -127,8 +150,9 @@ function calendario(mod, primero, n, omiteDomingo) {
 export async function prestamoNuevo(ctx) {
   const { view } = ctx;
   const qa = ctx.query.anterior || null;
-  const cobr = !isStaff();   // el cobrador solo puede renovar o refinanciar un préstamo de su ruta
-  if (cobr && !qa) { location.hash = '#/ruta'; return; }
+  const cobr = !isStaff();   // cobrador: presta desde su caja; Nuevo solo si el administrador le dio el permiso
+  const yo = S.profile;
+  if (cobr && !qa && !yo.puede_crear_prestamos) { toast('No tienes permiso para crear préstamos nuevos.'); location.hash = '#/ruta'; return; }
   let tipo = qa ? (ctx.query.tipo === 'REFINANCIACION' ? 'REFINANCIACION' : 'RENOVACION') : (ctx.query.tipo === 'MIGRACION' ? 'MIGRACION' : 'NUEVO');
   const TITULO = { NUEVO: 'Nuevo préstamo', MIGRACION: 'Migrar préstamo', RENOVACION: 'Renovar préstamo', REFINANCIACION: 'Refinanciar préstamo' };
   ctx.setTop(TITULO[tipo], { back: qa ? '#/prestamo/' + qa : '#/prestamos' });
@@ -139,9 +163,13 @@ export async function prestamoNuevo(ctx) {
     if (qa) ant = await q(sb.from('v_prestamos_resumen').select('*').eq('id', qa).single());
   } catch (e) { fail(e); view.replaceChildren(empty('No se pudo preparar el formulario', 'Inténtalo de nuevo.')); return; }
   // Cobrador: efectivo que tiene hoy en su caja (no puede prestar más que eso, salvo el dueño, que desembolsa desde la oficina o sus cuentas)
-  const dueno = cobr && !!S.profile.puede_desembolsar;
+  const editPap = !cobr || !!yo.papeleria_editable;      // quien decide la papelería (supervisor/admin o cobrador con permiso)
+  const puedeTransf = cobr ? !!yo.puede_desembolsar : true;
+  const cobraRuta = cobr || !!yo.es_cobrador;           // tiene caja propia
   let disp = null;
-  if (cobr && !dueno) { try { const d = await q(sb.rpc('mi_efectivo_disponible')); disp = d == null ? null : Number(d); } catch { disp = null; } }
+  if (cobraRuta) { try { const d = await q(sb.rpc('mi_efectivo_disponible')); disp = d == null ? null : Number(d); } catch { disp = null; } }
+  // "Modo propio": presta él mismo desde su caja (cobrador, o supervisor que cobra y elige un cliente de su ruta)
+  const propio = () => cobr || (!!yo.es_cobrador && !!elegido && elegido.cobrador_id === yo.id);
 
   let elegido = ant ? cls.find((c) => c.id === ant.cliente_id) || { id: ant.cliente_id, nombre_completo: ant.nombre_completo } : (ctx.query.cliente ? cls.find((c) => c.id === ctx.query.cliente) : null);
   const pctPap = cfgNum('PCT_PAPELERIA_CLIENTE', 0);
@@ -155,7 +183,7 @@ export async function prestamoNuevo(ctx) {
     clear(pick);
     if (elegido) {
       pick.append(h('div', { class: 'panel row between' }, h('div', {}, h('b', {}, elegido.nombre_completo), h('div', { class: 'small muted' }, [elegido.barrio, nombreDe(elegido.cobrador_id)].filter(Boolean).join(' · '))),
-        qa ? null : h('button', { class: 'btn small', type: 'button', on: { click: () => { elegido = null; pintarPick(); calc(); } } }, 'Cambiar')));
+        qa ? null : h('button', { class: 'btn small', type: 'button', on: { click: () => { elegido = null; pintarPick(); aplicarModo(); calc(); } } }, 'Cambiar')));
     } else {
       pick.append(h('div', { class: 'search' }, icon('search', 20), buscar), resultados);
       mostrar();
@@ -164,7 +192,7 @@ export async function prestamoNuevo(ctx) {
   function mostrar() {
     const t = norm(buscar.value);
     const f = (t ? cls.filter((c) => norm(c.nombre_completo + ' ' + c.documento).includes(t)) : cls).slice(0, 6);
-    resultados.replaceChildren(...f.map((c) => h('button', { type: 'button', class: 'item', style: { width: '100%', textAlign: 'left', background: 'none', border: 0, paddingLeft: '14px' }, on: { click: () => { elegido = c; pintarPick(); calc(); } } },
+    resultados.replaceChildren(...f.map((c) => h('button', { type: 'button', class: 'item', style: { width: '100%', textAlign: 'left', background: 'none', border: 0, paddingLeft: '14px' }, on: { click: () => { elegido = c; pintarPick(); aplicarModo(); calc(); } } },
       h('div', { class: 'grow' }, h('div', { class: 'name' }, c.nombre_completo), h('div', { class: 'meta' }, h('span', {}, c.barrio || ''), h('span', {}, c.documento || ''))))));
     if (!f.length) resultados.replaceChildren(h('p', { class: 'muted', style: { padding: '12px' } }, 'No hay clientes con ese nombre.'));
   }
@@ -181,31 +209,48 @@ export async function prestamoNuevo(ctx) {
   const syncPrimer = () => { if (!primerManual) primer.value = defPrimer(); };
   primer.addEventListener('input', () => { primerManual = true; });
   const volver = h('button', { type: 'button', class: 'btn small', on: { click: () => { primerManual = false; syncPrimer(); calc(); } } }, 'Usar la fecha por defecto');
-  const entrega = segmented([['NO', 'No'], ['SI', 'Sí, el cobrador lo lleva']], 'NO', (v) => { entBox.style.display = v === 'SI' ? '' : 'none'; if (v === 'SI' && !moneyVal(entMonto) && lastEnt) entMonto.value = num(lastEnt); calc(); });
-  const entMonto = moneyInput({ 'aria-label': 'Dinero entregado al cobrador' });
-  const entBox = h('div', { style: { display: 'none' } }, field('Dinero entregado al cobrador para este préstamo', entMonto, 'Obligatorio. Entra a la caja abierta de hoy del cobrador y queda en el cuadre. Debe ser mínimo lo que recibe el cliente.'));
   const yaPag = moneyInput({ 'aria-label': 'Ya cobrado' });
   const cuentasOk = (cobr ? (S.cuentasCobro || []) : S.cuentas).filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
   const cuenta = selectEl(cuentasOk.map((c) => [c.id, c.nombre]));
-  const medio = segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; const e = document.getElementById('bEntrega'); if (e) e.style.display = (v === 'TRANSFERENCIA' || cobr) ? 'none' : ''; if (v === 'TRANSFERENCIA') { setSeg(entrega, 'NO'); entBox.style.display = 'none'; } });
+  const medio = segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; aplicarModo(); calc(); });
   const cuentaBox = h('div', { style: { display: 'none' } }, field('Cuenta de la que sale', cuenta));
-  const descPap = segmented([['SI', 'Sí, descontar'], ['NO', 'No descontar']], 'SI', () => calc());
+  const descPap = segmented([['SI', 'Sí, descontar'], ['NO', 'No descontar']], 'SI', () => { papBox.style.display = descPap.get() === 'SI' ? '' : 'none'; calc(); });
+  const papTipo = segmented([['STD', pctPap + ' % (estándar)'], ['MAN', 'Valor en pesos']], 'STD', (v) => { papValBox.style.display = v === 'MAN' ? '' : 'none'; calc(); });
+  const papVal = moneyInput({ 'aria-label': 'Papelería en pesos' });
+  const papValBox = h('div', { style: { display: 'none' } }, field('Papelería en pesos', papVal, 'Es lo que se descuenta al cliente al entregar el dinero. La deuda del cliente no baja.'));
+  const papBox = h('div', {}, papTipo, papValBox);
   const pagaCom = segmented([['SI', 'Sí, pagar'], ['NO', 'No pagar']], conDinero() ? 'SI' : 'NO');
   const prev = h('div', { class: 'panel' });
 
-  const selTipo = qa ? null : segmented([['NUEVO', 'Nuevo'], ['MIGRACION', 'Migración']], tipo, (v) => { tipo = v; ctx.setTop(TITULO[tipo], { back: '#/prestamos' }); setSeg(pagaCom, conDinero() ? 'SI' : 'NO'); aplicarTipo(); calc(); });
+  const selTipo = (qa || cobr) ? null : segmented([['NUEVO', 'Nuevo'], ['MIGRACION', 'Migración']], tipo, (v) => { tipo = v; ctx.setTop(TITULO[tipo], { back: '#/prestamos' }); setSeg(pagaCom, conDinero() ? 'SI' : 'NO'); aplicarTipo(); calc(); });
   const info = h('div', {});
   const bValor = field('Valor prestado', valor);
   const bYa = h('div', {}, field('Ya cobrado hasta hoy', yaPag, 'Lo que el cliente ya pagó de este préstamo. No mueve dinero de las cuentas.'));
-  const bDinero = h('div', {}, h('div', { class: 'field' }, h('label', {}, 'Cómo se entrega el dinero'), medio), cuentaBox,
-    h('div', { class: 'field', id: 'bEntrega' }, h('label', {}, '¿El dinero se lo lleva el cobrador al cliente?'), entrega), entBox,
-    h('div', { class: 'field', id: 'bPap' }, h('label', {}, 'Papelería al cliente (' + pctPap + ' %)'), descPap, h('p', { class: 'hint' }, 'Se descuenta al entregar el dinero, pero la deuda del cliente no baja.')));
+  const bMedio = h('div', { class: 'field' }, h('label', {}, 'Cómo se entrega el dinero'), medio);
+  const bPap = h('div', { class: 'field' }, h('label', {}, 'Papelería al cliente'), descPap, papBox, h('p', { class: 'hint' }, 'Se descuenta al entregar el dinero, pero la deuda del cliente no baja.'));
+  const bDinero = h('div', {}, bMedio, cuentaBox, bPap);
+  const notaModo = h('div', {});
   const lblFecha = h('label', {}, 'Fecha de desembolso');
   const bFecha = h('div', { class: 'field' }, lblFecha, fecha);
+  function aplicarModo() {
+    const p = propio();
+    const transf = puedeTransf && cuentasOk.length > 0;
+    bMedio.style.display = (p ? transf : true) ? '' : 'none';
+    if (p && !transf) { setSeg(medio, 'EFECTIVO'); cuentaBox.style.display = 'none'; }
+    bPap.style.display = editPap ? '' : 'none';
+    bFecha.style.display = p && conDinero() ? 'none' : '';
+    if (p && conDinero()) { fecha.value = hoyCO(); syncPrimer(); }
+    clear(notaModo);
+    if (conDinero() && p) notaModo.append(h('p', { class: 'hint panelnote' }, disp == null
+      ? 'Tu caja no está abierta hoy. Sin caja abierta no puedes prestar.'
+      : 'Prestas desde tu caja' + (medio.get() === 'EFECTIVO' ? ': tienes ' + money(disp) + ' en efectivo y no puedes prestar más. Lo prestado se descuenta de lo que debes entregar al cerrar la caja.' : ', y el dinero sale de la cuenta que elijas.')));
+    if (conDinero() && !p && !cobr) notaModo.append(h('p', { class: 'hint panelnote' }, 'Desembolso de la oficina: el dinero sale de la cuenta que elijas. No se registra en la caja del cobrador.'));
+  }
   function aplicarTipo() {
     bValor.style.display = tipo === 'REFINANCIACION' ? 'none' : '';
     bYa.style.display = tipo === 'MIGRACION' ? '' : 'none';
     bDinero.style.display = conDinero() ? '' : 'none';
+    aplicarModo();
     lblFecha.textContent = tipo === 'MIGRACION' ? 'Fecha en que se hizo el préstamo' : tipo === 'REFINANCIACION' ? 'Fecha de la refinanciación' : 'Fecha de desembolso';
     clear(info);
     if (tipo === 'MIGRACION') info.append(h('p', { class: 'hint panelnote' }, 'Para cargar un préstamo que ya venía andando. No descuenta papelería ni mueve dinero de las cuentas.'));
@@ -219,16 +264,19 @@ export async function prestamoNuevo(ctx) {
   function calc() {
     const v = tipo === 'REFINANCIACION' ? Number(ant.saldo) : moneyVal(valor), p = Number(pct.value), n = Number(cuotas.value);
     if (!v || pct.value === '' || !n) { prev.replaceChildren(h('p', { class: 'muted' }, 'Completa ' + (tipo === 'REFINANCIACION' ? 'interés y cuotas' : 'valor, interés y cuotas') + ' para ver el resumen.')); return null; }
-    const conPap = conDinero() && descPap.get() === 'SI';
-    const pap = conPap ? Math.round(v * pctPap / 100) : 0, ent = v - pap, int = Math.round(v * p / 100), tot = v + int, cuota = Math.round(tot / n);
+    const conPap = conDinero() && (editPap ? descPap.get() === 'SI' : true);
+    const manual = editPap && conPap && papTipo.get() === 'MAN';
+    const pap = conPap ? (manual ? moneyVal(papVal) : Math.round(v * pctPap / 100)) : 0, ent = v - pap, int = Math.round(v * p / 100), tot = v + int, cuota = Math.round(tot / n);
     lastEnt = ent;
+    if (pap >= v) { prev.replaceChildren(h('p', { class: 'err' }, 'La papelería (' + money(pap) + ') debe ser menor al valor prestado.')); return null; }
     const ya = tipo === 'MIGRACION' ? moneyVal(yaPag) : 0;
+    const efProp = propio() && conDinero() && medio.get() === 'EFECTIVO' && disp != null;
     if (ya >= tot) { prev.replaceChildren(h('p', { class: 'err' }, 'Lo ya cobrado (' + money(ya) + ') debe ser menor al total a cobrar (' + money(tot) + ').')); return null; }
     const cal = calendario(mod.value, primer.value || defPrimer(), n, omite);
     const L = (a, b, bold) => h('div', { class: 'line' }, h(bold ? 'b' : 'span', { class: 'grow' }, a), h(bold ? 'b' : 'span', { class: 'amt' }, b));
     prev.replaceChildren(...[
       L(tipo === 'REFINANCIACION' ? 'Saldo que se refinancia' : 'Valor prestado', money(v)),
-      conDinero() ? L('Papelería (' + (conPap ? pctPap + ' %' : 'no se descuenta') + ')', money(pap)) : null,
+      conDinero() ? L('Papelería (' + (conPap ? (manual ? 'valor manual' : pctPap + ' %') : 'no se descuenta') + ')', money(pap)) : null,
       conDinero() ? L('Se entrega al cliente', money(ent), true) : null,
       L('Interés (' + p + ' %)', money(int)),
       L('Total a cobrar', money(tot), true),
@@ -236,13 +284,12 @@ export async function prestamoNuevo(ctx) {
       ya ? L('Saldo pendiente', money(tot - ya), true) : null,
       L(n + ' cuotas de', money(cuota)),
       L(tipo === 'MIGRACION' ? 'Primera cuota' : 'Primer cobro', fdate(cal[0])),
-      entrega.get() === 'SI' && conDinero() ? L('Entregado al cobrador', money(moneyVal(entMonto) || 0)) : null,
-      cobr && !dueno && conDinero() && disp != null ? L('Efectivo en tu caja', money(disp), ent > disp) : null,
-      cobr && !dueno && conDinero() && disp != null && ent > disp ? h('p', { class: 'err' }, 'No tienes efectivo suficiente: este préstamo entrega ' + money(ent) + ' y en tu caja hay ' + money(disp) + '. No puedes prestar más del efectivo que tienes.') : null,
+      efProp ? L('Efectivo en tu caja', money(disp), ent > disp) : null,
+      efProp && ent > disp ? h('p', { class: 'err' }, 'No tienes efectivo suficiente: este préstamo entrega ' + money(ent) + ' y en tu caja hay ' + money(disp) + '. No puedes prestar más del efectivo que tienes.') : null,
       L('Última cuota', fdate(cal[cal.length - 1]))].filter(Boolean));
-    return { v, p, n, ya };
+    return { v, p, n, ya, ent };
   }
-  [valor, pct, cuotas, yaPag, primer, entMonto].forEach((e) => e.addEventListener('input', calc));
+  [valor, pct, cuotas, yaPag, primer, papVal].forEach((e) => e.addEventListener('input', calc));
   fecha.addEventListener('input', () => { syncPrimer(); calc(); });
   mod.addEventListener('change', () => { syncPrimer(); calc(); });
 
@@ -250,27 +297,28 @@ export async function prestamoNuevo(ctx) {
     if (!elegido) throw new Error('Elige el cliente.');
     const r = calc();
     if (!r) throw new Error('Completa los datos del préstamo.');
-    if (cobr && !dueno && conDinero()) {
-      if (disp == null) throw new Error('Tu caja está cerrada. Pídele a la supervisora que la abra.');
-      const entCli = r.v - Math.round(r.v * pctPap / 100);
-      if (entCli > disp) throw new Error('No tienes efectivo suficiente: en tu caja hay ' + money(disp) + ' y este préstamo entrega ' + money(entCli) + '.');
+    const p = propio();
+    if (p && conDinero()) {
+      if (disp == null) throw new Error('No tienes la caja abierta hoy. Sin caja abierta no puedes prestar.');
+      if (medio.get() === 'EFECTIVO' && r.ent > disp) throw new Error('No tienes efectivo suficiente: en tu caja hay ' + money(disp) + ' y este préstamo entrega ' + money(r.ent) + '.');
     }
-    if (cobr && dueno && conDinero() && medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No tienes cuentas habilitadas para desembolsar. Pídele al administrador que las configure.');
-    if (!cobr && conDinero() && medio.get() === 'EFECTIVO' && entrega.get() === 'SI' && !(moneyVal(entMonto) > 0)) throw new Error('Escribe el dinero entregado al cobrador.');
-    if (conDinero() && medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No hay cuentas disponibles para el desembolso.');
+    if (conDinero() && medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No tienes cuentas habilitadas para desembolsar. Pídele al administrador que las configure.');
+    const manual = editPap && conDinero() && descPap.get() === 'SI' && papTipo.get() === 'MAN';
+    if (manual && !(moneyVal(papVal) >= 0)) throw new Error('Escribe la papelería en pesos.');
     const id = await q(sb.rpc('crear_prestamo', {
       p_cliente: elegido.id, p_valor: r.v, p_porcentaje: r.p, p_modalidad: mod.value, p_cuotas: r.n,
-      p_cuenta: (!cobr || dueno) && conDinero() && medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: (!cobr || dueno) && conDinero() ? medio.get() : 'EFECTIVO',
-      p_fecha_desembolso: cobr ? hoyCO() : fecha.value, p_anterior: qa, p_tipo: tipo, p_ya_pagado: r.ya,
-      p_descuenta_papeleria: !cobr && conDinero() ? descPap.get() === 'SI' : null, p_paga_comision: cobr ? null : pagaCom.get() === 'SI',
-      p_fecha_primer_pago: primer.value || null,
-      p_entrega_cobrador: !cobr && conDinero() && medio.get() === 'EFECTIVO' && entrega.get() === 'SI' ? moneyVal(entMonto) : null }));
+      p_cuenta: conDinero() && medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: conDinero() ? medio.get() : 'EFECTIVO',
+      p_fecha_desembolso: (cobr || (p && conDinero())) ? hoyCO() : fecha.value, p_anterior: qa, p_tipo: tipo, p_ya_pagado: r.ya,
+      p_descuenta_papeleria: editPap && conDinero() ? descPap.get() === 'SI' : null,
+      p_papeleria_valor: manual ? moneyVal(papVal) : null,
+      p_paga_comision: cobr ? null : pagaCom.get() === 'SI',
+      p_fecha_primer_pago: primer.value || null }));
     toast({ NUEVO: 'Préstamo creado', MIGRACION: 'Préstamo migrado', RENOVACION: 'Préstamo renovado', REFINANCIACION: 'Préstamo refinanciado' }[tipo]); location.hash = '#/prestamo/' + id;
   }) } }, 'Guardar préstamo');
 
   view.replaceChildren(h('div', { class: 'stack' },
     selTipo ? h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Tipo de préstamo'), selTipo) : null,
-    info,
+    info, notaModo,
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Cliente'), pick),
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Condiciones'),
       bValor, h('div', { class: 'grid2' }, field('Interés (%)', pct, 'Lo define quien presta'), field('Número de cuotas', cuotas)),
@@ -280,17 +328,7 @@ export async function prestamoNuevo(ctx) {
       h('div', { class: 'field' }, h('label', {}, 'Comisión para el cobrador'), pagaCom, h('p', { class: 'hint' }, 'Si eliges "No pagar", este préstamo no suma a la comisión de la liquidación.'))),
     h('div', { class: 'section' }, h('h3', {}, 'Resumen'), prev), crear));
   aplicarTipo(); syncPrimer(); pintarPick(); calc();
-  if (cobr) {
-    // El cobrador define interés, cuotas y modalidad; el desembolso es en efectivo, hoy, y queda en su caja
-    bFecha.style.display = 'none'; pagaCom.parentElement.style.display = 'none';
-    if (dueno) {   // el dueño puede entregar en efectivo (sale de la oficina) o por transferencia desde sus cuentas habilitadas
-      const pp = document.getElementById('bPap'); if (pp) pp.style.display = 'none';
-      const be = document.getElementById('bEntrega'); if (be) be.style.display = 'none';
-    } else bDinero.style.display = 'none';
-    if (tipo === 'RENOVACION') info.append(h('p', { class: 'hint panelnote' }, dueno
-      ? 'Elige si entregas el dinero en efectivo (queda registrado como entrega en tu caja de hoy) o por transferencia desde una de tus cuentas.'
-      : 'Prestas con el efectivo que tienes en tu caja' + (disp != null ? ' (' + money(disp) + ')' : '') + '. No puedes prestar más de eso; lo que prestes se descuenta de lo que debes entregar al cerrar la caja.'));
-  }
+  if (cobr) pagaCom.parentElement.style.display = 'none';   // el cobrador no ve comisión: se aplica la de la empresa
 }
 
 // ---------------------------------------------------------------- Caja

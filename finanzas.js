@@ -154,7 +154,7 @@ function desglose(m) {
             q(sb.from('gastos').select('valor,categoria,descripcion').eq('caja_id', m.caja_id).order('categoria'))
           ]);
           if (cj) extra.push(h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Caja de ' + nombreDe(cj.cobrador_id) + ' · ' + fdate(cj.fecha)),
-            L('Base entregada', money(cj.base_inicial)), L('Cobros en efectivo', money(cj.total_cobros_efectivo)), L('Gastos en efectivo', money(cj.total_gastos)), L('Esperado', money(cj.total_esperado)),
+            L('Base entregada', money(cj.base_inicial)), L('Cobros en efectivo', money(cj.total_cobros_efectivo)), L('Gastos en efectivo', money(cj.total_gastos)), Number(cj.total_entregado_clientes) ? L('Préstamos entregados a clientes', '− ' + money(cj.total_entregado_clientes)) : null, Number(cj.total_entregas) ? L('Dinero adicional recibido del cobrador', money(cj.total_entregas)) : null, L('Esperado', money(cj.total_esperado)),
             cj.dinero_entregado != null ? L('Entregó', money(cj.dinero_entregado)) : null, cj.diferencia != null ? L('Diferencia', money(cj.diferencia), true) : null));
           if (m.tipo === 'CIERRE_COBROS' && ps.length) extra.push(h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Cobros incluidos'), ps.map((p) => L((p.clientes && p.clientes.nombre_completo) || 'Cliente', money(p.valor)))));
           if (m.tipo === 'CIERRE_GASTOS' && gs.length) extra.push(h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Gastos incluidos'), gs.map((g) => L(g.categoria + (g.descripcion ? ' · ' + g.descripcion : ''), money(g.valor)))));

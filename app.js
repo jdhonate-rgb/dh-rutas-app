@@ -14,7 +14,7 @@ let top, view, nav;
 const ROUTES = [
   [/^#\/ruta$/, R.ruta, 'todos'], [/^#\/prestamo\/([^/?]+)$/, R.tarjeta, 'todos'],
   [/^#\/gastos$/, G.gastos, 'todos'], [/^#\/resumen$/, G.resumen, 'todos'],
-  [/^#\/clientes$/, M.clientes, 'staff'], [/^#\/cliente\/([^/?]+)$/, M.cliente, 'staff'],
+  [/^#\/cliente-nuevo$/, M.clienteNuevo, 'todos'], [/^#\/auditoria$/, A.auditoria, 'staff'], [/^#\/clientes$/, M.clientes, 'staff'], [/^#\/cliente\/([^/?]+)$/, M.cliente, 'staff'],
   [/^#\/prestamos$/, M.prestamos, 'staff'], [/^#\/prestamo-nuevo$/, M.prestamoNuevo, 'todos'], [/^#\/caja$/, M.caja, 'staff'],
   [/^#\/cuentas$/, F.cuentas, 'ver'], [/^#\/cuenta\/([^/?]+)$/, F.cuenta, 'ver'],
   [/^#\/liquidaciones$/, F.liquidaciones, 'staff'], [/^#\/liquidacion\/([^/?]+)$/, F.liquidacion, 'staff'],
@@ -22,7 +22,7 @@ const ROUTES = [
   [/^#\/reportes$/, RP.indice, 'staff'], [/^#\/reportes\/([^/?]+)$/, RP.reporte, 'staff'],
   [/^#\/usuarios$/, A.usuarios, 'admin'], [/^#\/rutas$/, A.rutas, 'admin'], [/^#\/config$/, A.config, 'admin']
 ];
-const MAS_GRUPO = /^#\/(mas|clientes|cliente|gastos|resumen|liquidaciones|liquidacion|actividad|reportes|usuarios|rutas|config)/;
+const MAS_GRUPO = /^#\/(mas|auditoria|clientes|cliente|gastos|resumen|liquidaciones|liquidacion|actividad|reportes|usuarios|rutas|config)/;
 
 function navItems() {
   if (isStaff()) return [['#/ruta', 'route', 'Ruta'], ['#/caja', 'box', 'Caja'], ['#/prestamos', 'cash', 'Préstamos'], ['#/cuentas', 'bank', 'Cuentas'], ['#/mas', 'grid', 'Más']];
@@ -34,7 +34,7 @@ function navItems() {
 function itemsMenu() {
   if (isStaff()) {
     const m = [['#/ruta', 'route', 'Ruta'], ['#/caja', 'box', 'Caja'], ['#/prestamos', 'cash', 'Préstamos'], ['#/clientes', 'users', 'Clientes'], ['#/cuentas', 'bank', 'Cuentas'],
-      ['#/gastos', 'receipt', 'Gastos'], ['#/resumen', 'chart', 'Resumen del día'], ['#/liquidaciones', 'wallet', 'Liquidaciones'], ['#/reportes', 'file', 'Reportes'], ['#/actividad', 'list', 'Actividad']];
+      ['#/gastos', 'receipt', 'Gastos'], ['#/resumen', 'chart', 'Resumen del día'], ['#/liquidaciones', 'wallet', 'Liquidaciones'], ['#/auditoria', 'search', 'Auditar rutas'], ['#/reportes', 'file', 'Reportes'], ['#/actividad', 'list', 'Actividad']];
     if (isAdmin()) m.push(['#/usuarios', 'user', 'Usuarios'], ['#/rutas', 'route', 'Rutas'], ['#/config', 'sliders', 'Configuración']);
     return m;
   }

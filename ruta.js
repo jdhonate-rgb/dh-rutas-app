@@ -11,7 +11,12 @@ const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-
 
 export async function ruta(ctx) {
   const { view } = ctx;
-  ctx.setTop('Ruta', { sub: fdate(hoyCO(), true), actions: [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }] });
+  const accs = [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }];
+  if (!isStaff()) {   // cobrador con permisos: crear clientes / préstamos nuevos desde la ruta
+    if (S.profile.puede_crear_prestamos) accs.unshift({ icon: 'cash', label: 'Nuevo préstamo', fn: () => { location.hash = '#/prestamo-nuevo'; } });
+    if (S.profile.puede_crear_clientes) accs.unshift({ icon: 'users', label: 'Nuevo cliente', fn: () => { location.hash = '#/cliente-nuevo'; } });
+  }
+  ctx.setTop('Ruta', { sub: fdate(hoyCO(), true), actions: accs });
   view.replaceChildren(skeleton(5));
   let rows;
   try {
@@ -33,7 +38,10 @@ export async function ruta(ctx) {
   }
 
   const staff = isStaff();
-  if (staff && S.profile.es_cobrador && !F.tocado) { F.cobrador = S.profile.id; F.tocado = true; }   // supervisor que también cobra: abre en su ruta
+  // supervisor que también cobra: su Ruta se abre en sus clientes; si 'solo mi ruta' está activo, no ve a los demás cobradores
+  const solo = staff && S.profile.es_cobrador && S.profile.ruta_solo_propia;
+  if (solo) F.cobrador = S.profile.id;
+  else if (staff && S.profile.es_cobrador && !F.tocado) { F.cobrador = S.profile.id; F.tocado = true; }
   const strip = h('div', { class: 'strip' });
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
   const list = h('div', { class: 'stack' });
@@ -43,7 +51,7 @@ export async function ruta(ctx) {
     h('button', { class: 'chip' + (F.mod === v ? ' on' : ''), on: { click: (e) => { F.mod = v; [...chips.children].forEach((c) => c.classList.remove('on')); e.currentTarget.classList.add('on'); pintarLista(); } } }, t)));
 
   let cobSel = null;
-  if (staff) {
+  if (staff && !solo) {
     const cobs = S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO');
     cobSel = selectEl([['TODOS', 'Todos los cobradores'], ...cobs.map((c) => [c.id, c.nombre])], F.cobrador, { 'aria-label': 'Cobrador', on: { change: (e) => { F.cobrador = e.target.value; pintarLista(); } } });
   }
