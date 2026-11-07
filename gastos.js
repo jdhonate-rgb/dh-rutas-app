@@ -103,7 +103,7 @@ async function resumenCobrador(ctx) {
       prest.length ? h('div', {}, h('div', { class: 'small muted', style: { margin: '6px 0 2px' } }, 'Préstamos entregados hoy (' + prest.length + ')'),
         prest.map((p) => h('div', { class: 'line' }, h('div', { class: 'grow' }, h('b', {}, p.cliente), h('div', { class: 'small muted' }, 'Prestó ' + money(p.valor) + ' · papelería ' + money(p.papeleria) + ' · ' + (p.medio || ''))), h('div', { class: 'amt neg' }, '− ' + money(p.entregado))))) : linea('Préstamos entregados', money(0)),
       entregaCaja > 0 ? linea('Préstamos entregados desde tu caja', '− ' + money(entregaCaja)) : null),
-    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Comisión por papelería'),
+    S.profile && S.profile.cobra_comision === false ? null : h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Comisión por papelería'),
       linea('Papelería de tus préstamos hoy', money(rd ? rd.papeleria_hoy : 0)),
       linea('Comisión de hoy (' + pctCom + ' %)', money(rd ? rd.comision_hoy : 0)),
       linea('Comisión de la semana', money(rd ? rd.comision_semana : 0)),
