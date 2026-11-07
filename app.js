@@ -14,7 +14,7 @@ let top, view, nav;
 const ROUTES = [
   [/^#\/ruta$/, R.ruta, 'todos'], [/^#\/prestamo\/([^/?]+)$/, R.tarjeta, 'todos'],
   [/^#\/gastos$/, G.gastos, 'todos'], [/^#\/resumen$/, G.resumen, 'todos'],
-  [/^#\/cliente-nuevo$/, M.clienteNuevo, 'todos'], [/^#\/auditoria$/, A.auditoria, 'staff'], [/^#\/clientes$/, M.clientes, 'staff'], [/^#\/cliente\/([^/?]+)$/, M.cliente, 'staff'],
+  [/^#\/cliente-nuevo$/, M.clienteNuevo, 'todos'], [/^#\/auditoria$/, A.auditoria, 'aud'], [/^#\/cajas-equipo$/, A.cajasEquipo, 'cajaeq'], [/^#\/clientes$/, M.clientes, 'staff'], [/^#\/cliente\/([^/?]+)$/, M.cliente, 'staff'],
   [/^#\/prestamos$/, M.prestamos, 'staff'], [/^#\/prestamo-nuevo$/, M.prestamoNuevo, 'todos'], [/^#\/caja$/, M.caja, 'staff'],
   [/^#\/cuentas$/, F.cuentas, 'ver'], [/^#\/cuenta\/([^/?]+)$/, F.cuenta, 'ver'],
   [/^#\/liquidaciones$/, F.liquidaciones, 'staff'], [/^#\/liquidacion\/([^/?]+)$/, F.liquidacion, 'staff'],
@@ -27,6 +27,7 @@ const MAS_GRUPO = /^#\/(mas|auditoria|clientes|cliente|gastos|resumen|liquidacio
 function navItems() {
   if (isStaff()) return [['#/ruta', 'route', 'Ruta'], ['#/caja', 'box', 'Caja'], ['#/prestamos', 'cash', 'Préstamos'], ['#/cuentas', 'bank', 'Cuentas'], ['#/mas', 'grid', 'Más']];
   const base = [['#/ruta', 'route', 'Ruta'], ['#/gastos', 'receipt', 'Gastos'], ['#/resumen', 'chart', 'Resumen']];
+  if (S.profile && S.profile.puede_registrar_gastos === false) base.splice(1, 1);
   if (S.profile && S.profile.ver_cuentas) base.splice(2, 0, ['#/cuentas', 'bank', 'Cuentas']);
   return base;
 }
@@ -38,7 +39,10 @@ function itemsMenu() {
     if (isAdmin()) m.push(['#/usuarios', 'user', 'Usuarios'], ['#/rutas', 'route', 'Rutas'], ['#/config', 'sliders', 'Configuración']);
     return m;
   }
-  return navItems().map(([href, ic, label]) => [href, ic, label === 'Resumen' ? 'Resumen del día' : label]);
+  const m = navItems().map(([href, ic, label]) => [href, ic, label === 'Resumen' ? 'Resumen del día' : label]);
+  if (S.profile.puede_abrir_cajas) m.push(['#/cajas-equipo', 'box', 'Cajas del equipo']);
+  if (S.profile.puede_auditar) m.push(['#/auditoria', 'search', 'Auditar rutas']);
+  return m;
 }
 let drawer, scrim;
 function abrirMenu(v) { drawer.classList.toggle('open', v); scrim.classList.toggle('open', v); document.body.classList.toggle('noscroll', v); }
@@ -98,7 +102,7 @@ async function render() {
   const query = Object.fromEntries(new URLSearchParams(qs || ''));
   let hit = null, params = [];
   for (const [re, fn, rol] of ROUTES) { const m = re.exec(path); if (m) { hit = { fn, rol }; params = m.slice(1); break; } }
-  const permitido = hit && (hit.rol === 'todos' || (hit.rol === 'staff' && isStaff()) || (hit.rol === 'ver' && (isStaff() || S.profile.ver_cuentas)) || (hit.rol === 'admin' && isAdmin()));
+  const permitido = hit && (hit.rol === 'todos' || (hit.rol === 'staff' && isStaff()) || (hit.rol === 'ver' && (isStaff() || S.profile.ver_cuentas)) || (hit.rol === 'admin' && isAdmin()) || (hit.rol === 'aud' && (isStaff() || S.profile.puede_auditar)) || (hit.rol === 'cajaeq' && (isStaff() || S.profile.puede_abrir_cajas)));
   if (!permitido) { location.hash = '#/ruta'; return; }
   pintarNav(); pintarMenu(); abrirMenu(false);
   window.scrollTo(0, 0);

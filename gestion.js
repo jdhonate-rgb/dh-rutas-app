@@ -179,8 +179,13 @@ export async function prestamoNuevo(ctx) {
   const pick = h('div', {});
   const buscar = h('input', { type: 'search', placeholder: 'Escribe el nombre o documento', autocomplete: 'off' });
   const resultados = h('div', { class: 'ledger', style: { marginTop: '8px' } });
+  const selCob = selectEl([['', 'Sin cobrador'], ...S.profiles.filter((x) => x.rol === 'COBRADOR' && x.estado === 'ACTIVO').map((x) => [x.id, x.nombre])], '', { 'aria-label': 'Cobrador', on: { change: () => { aplicarModo(); calc(); } } });
+  const bCob = h('div', { class: 'field', style: { display: 'none' } }, h('label', {}, 'Cobrador / Ruta del préstamo'), selCob,
+    h('p', { class: 'hint' }, 'Viene el cobrador del cliente. Si lo cambias, el cliente pasa a ese cobrador y a su ruta junto con el préstamo (solo si no tiene otro préstamo activo).'));
   function pintarPick() {
     clear(pick);
+    bCob.style.display = (!cobr && elegido) ? '' : 'none';
+    if (elegido) selCob.value = elegido.cobrador_id || '';
     if (elegido) {
       pick.append(h('div', { class: 'panel row between' }, h('div', {}, h('b', {}, elegido.nombre_completo), h('div', { class: 'small muted' }, [elegido.barrio, nombreDe(elegido.cobrador_id)].filter(Boolean).join(' · '))),
         qa ? null : h('button', { class: 'btn small', type: 'button', on: { click: () => { elegido = null; pintarPick(); aplicarModo(); calc(); } } }, 'Cambiar')));
@@ -312,14 +317,15 @@ export async function prestamoNuevo(ctx) {
       p_descuenta_papeleria: editPap && conDinero() ? descPap.get() === 'SI' : null,
       p_papeleria_valor: manual ? moneyVal(papVal) : null,
       p_paga_comision: cobr ? null : pagaCom.get() === 'SI',
-      p_fecha_primer_pago: primer.value || null }));
+      p_fecha_primer_pago: primer.value || null,
+      p_cobrador: (!cobr && selCob.value && selCob.value !== elegido.cobrador_id) ? selCob.value : null }));
     toast({ NUEVO: 'Préstamo creado', MIGRACION: 'Préstamo migrado', RENOVACION: 'Préstamo renovado', REFINANCIACION: 'Préstamo refinanciado' }[tipo]); location.hash = '#/prestamo/' + id;
   }) } }, 'Guardar préstamo');
 
   view.replaceChildren(h('div', { class: 'stack' },
     selTipo ? h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Tipo de préstamo'), selTipo) : null,
     info, notaModo,
-    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Cliente'), pick),
+    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Cliente'), pick, bCob),
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Condiciones'),
       bValor, h('div', { class: 'grid2' }, field('Interés (%)', pct, 'Lo define quien presta'), field('Número de cuotas', cuotas)),
       h('div', { class: 'grid2' }, field('Modalidad de cobro', mod), bFecha),
@@ -371,7 +377,7 @@ export async function caja(ctx) {
     } else {
       cuerpo.push(h('div', { class: 'kv', style: { marginTop: '10px' } }, kvc('Base entregada', money(base)), kvc('Cobros en efectivo', money(cerrada ? cj.total_cobros_efectivo : ef)), kvc('Gastos en efectivo', money(cerrada ? cj.total_gastos : gs)), kvc('Transferencias', money(tr)),
           ents.length ? kvc('Entregado al cobrador para préstamos', money(entM)) : null, ents.length ? kvc('Entregado a clientes', '− ' + money(entC)) : null),
-        ents.length ? h('div', { class: 'small muted', style: { margin: '6px 2px' } }, ents.map((e) => ((e.prestamos && e.prestamos.clientes && e.prestamos.clientes.nombre_completo) || 'Cliente') + ' ' + money(e.monto)).join(' · ')) : null,
+        ents.length ? h('div', { class: 'small', style: { margin: '6px 2px' } }, h('div', { class: 'muted' }, 'Préstamos entregados:'), ents.map((e) => h('div', { class: 'line' }, h('span', { class: 'grow' }, ((e.prestamos && e.prestamos.clientes && e.prestamos.clientes.nombre_completo) || 'Cliente') + (Number(e.monto) > 0 ? ' (con ' + money(e.monto) + ' adicionales del cobrador)' : '')), h('b', { class: 'amt' }, money(e.valor_cliente))))) : null,
         h('div', { class: 'line', style: { marginTop: '6px' } }, h('b', { class: 'grow' }, 'Efectivo esperado'), h('b', { class: 'amt' }, money(esperado))));
       if (cerrada) {
         const df = Number(cj.diferencia);

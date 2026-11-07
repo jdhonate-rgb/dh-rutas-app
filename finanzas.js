@@ -1,5 +1,5 @@
 // Cuentas (incluye efectivo de oficina) y liquidaciones de cobradores.
-import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, num, addDays } from './lib.js';
+import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, num, addDays, confirmarEliminar } from './lib.js';
 import { S, sb, q, isAdmin, isStaff, nombreDe, esCob } from './state.js';
 
 const sum = (arr, k) => arr.reduce((a, r) => a + Number(r[k] || 0), 0);
@@ -35,7 +35,8 @@ export async function cuentas(ctx) {
       h('div', { class: 'grow' }, h('div', { class: 'name' }, c.nombre), h('div', { class: 'meta' }, h('span', {}, c.tipo === 'EFECTIVO' ? 'Efectivo de oficina' : c.tipo === 'NEQUI' ? 'Nequi' : c.tipo === 'BANCARIA' ? 'Cuenta bancaria' : 'Papelería'), (() => { const p = pap.find((x) => x.cuenta_id === c.id); return p && Number(p.papeleria_total) > 0 ? h('span', {}, 'Papelería disponible ' + money(p.disponible)) : null; })())),
       h('div', { class: 'amt', style: { fontSize: '17px' } }, money(c.saldo_actual))))),
     isStaff() ? h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Papelería'),
-      h('div', { class: 'kv' }, kvc('Total acumulado', money(totalPap)), kvb('De los cobradores', money(cobr), () => detallePap('Papelería de los cobradores', pap, 'parte_cobrador', nomCta)), kvb('De la empresa', money(empresa), () => detallePap('Papelería de la empresa', pap, 'parte_empresa', nomCta)), kvc('Ya retirada', money(retirada))),
+      h('div', { class: 'kv' }, kvb('Total de la empresa', money(totalPap), () => detallePap('Papelería de la empresa (por cuenta)', pap, 'papeleria_total', nomCta)), kvc('Ya retirada', money(retirada))),
+      h('p', { class: 'small muted', style: { margin: '6px 0' } }, 'Toda la papelería es de la empresa. La comisión del cobrador se calcula y se paga en efectivo en su liquidación.'),
       h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Disponible para retirar'), h('b', { class: 'amt pos' }, money(disp))),
       conFondo.length ? h('div', { class: 'small muted', style: { marginTop: '8px' } }, 'Por cuenta: ' + conFondo.map((p) => nomCta(p.cuenta_id) + ' ' + money(p.disponible)).join(' · ')) : h('div', { class: 'small muted', style: { marginTop: '8px' } }, 'No hay papelería disponible para retirar.'),
       h('div', { class: 'row', style: { marginTop: '12px', gap: '8px', flexWrap: 'wrap' } }, h('button', { class: 'btn small', disabled: !conFondo.length, on: { click: () => retirarPapeleria(conFondo, nomCta, ctx) } }, 'Retirar papelería'))) : null,
@@ -79,7 +80,7 @@ export async function cuenta(ctx) {
     h('div', { class: 'hero' }, h('div', { class: 'ad', style: { marginTop: 0 } }, 'Saldo actual'), h('div', { class: 'nm', style: { fontSize: '32px', marginTop: '6px' } }, money(info.saldo_actual)),
       h('div', { class: 'ad' }, 'Saldo inicial ' + money(info.saldo_inicial))),
     pc && Number(pc.papeleria_total) > 0 ? h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Papelería en esta cuenta'),
-      h('div', { class: 'kv' }, kvc('Descontada en desembolsos', money(pc.papeleria_total)), kvc('Ya retirada', money(pc.retirado))),
+      h('div', { class: 'kv' }, kvc('Papelería de la empresa', money(pc.papeleria_total)), kvc('Ya retirada', money(pc.retirado))),
       h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Disponible para retirar'), h('b', { class: 'amt pos' }, money(pc.disponible))),
       h('p', { class: 'hint' }, 'Es parte del saldo de la cuenta; solo se muestra aparte de forma informativa.')) : null,
     isStaff() ? h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } },
@@ -96,7 +97,7 @@ export async function cuenta(ctx) {
       const movs = await q(sb.from('v_detalle_cuenta').select('*').eq('cuenta_id', id).gte('fecha', desde.value).lte('fecha', hasta.value).order('fecha', { ascending: false }).order('id', { ascending: false }).limit(1000));
       const entradas = sum(movs.filter((m) => m.monto > 0), 'monto'), salidas = -sum(movs.filter((m) => m.monto < 0), 'monto');
       rango.replaceChildren(h('div', { class: 'kv' }, kvc('Ingresos', '+ ' + money(entradas)), kvc('Egresos', '− ' + money(salidas)), kvc('Neto del rango', money(entradas - salidas)), kvc('Movimientos', String(movs.length))));
-      lista.replaceChildren(movs.length ? h('div', { class: 'panel' }, movs.map((m) => h('div', { class: 'line tap', role: 'button', tabindex: '0', style: { cursor: 'pointer' }, on: { click: () => desglose(m) } },
+      lista.replaceChildren(movs.length ? h('div', { class: 'panel' }, movs.map((m) => h('div', { class: 'line tap', role: 'button', tabindex: '0', style: { cursor: 'pointer' }, on: { click: () => desglose(m, ctx) } },
         h('div', { class: 'grow' }, h('div', {}, h('b', {}, MOV[m.tipo] || m.tipo), m.cliente ? ' · ' + m.cliente : ''),
           h('div', { class: 'small muted' }, fdate(m.fecha) + (m.registrado_por ? ' · ' + m.registrado_por : '') + (m.descripcion && (!MOV[m.tipo] || /RETIRO|TRANSFERENCIA|INGRESO/.test(m.tipo)) ? ' · ' + m.descripcion : '') + ' · saldo ' + money(m.saldo_acumulado))),
         h('div', { class: 'amt ' + (m.monto > 0 ? 'pos' : 'neg') }, (m.monto > 0 ? '+ ' : '− ') + money(Math.abs(m.monto)))))) : empty('Sin movimientos en este rango', 'Cambia las fechas para ver otros movimientos.'));
@@ -114,7 +115,7 @@ function detallePap(titulo, pap, campo, nomCta) {
       h('div', { class: 'amt' }, money(p[campo]))))) : empty('Sin papelería', 'Aún no hay desembolsos con papelería.')));
 }
 
-function desglose(m) {
+function desglose(m, ctx) {
   const staff = isStaff();
   const L = (a, b, bold) => h('div', { class: 'line' }, h(bold ? 'b' : 'span', { class: 'grow' }, a), h(bold ? 'b' : 'span', { class: 'amt' }, b));
   sheet(MOV[m.tipo] || m.tipo, (close) => {
@@ -123,6 +124,14 @@ function desglose(m) {
       L('Valor', (m.monto > 0 ? '+ ' : '− ') + money(Math.abs(m.monto)), true), L('Fecha', fdate(m.fecha)), m.registrado_por ? L('Registrado por', m.registrado_por) : null,
       m.cliente ? L('Cliente', m.cliente) : null, m.descripcion ? L('Detalle', m.descripcion) : null, L('Saldo de la cuenta después', money(m.saldo_acumulado)));
     box.append(base);
+    if (staff && (S.profile.rol === 'ADMINISTRADOR' || S.profile.rol === 'SUPERVISOR')) {
+      const manual = ['INGRESO_OFICINA', 'INGRESO', 'RETIRO', 'RETIRO_PAPELERIA', 'TRANSFERENCIA_SALIDA', 'TRANSFERENCIA_ENTRADA'].includes(m.tipo) && !m.prestamo_id && !m.pago_id && !m.gasto_id && !m.caja_id && !m.liquidacion_id;
+      if (manual) box.append(h('button', { class: 'btn danger block', type: 'button', on: { click: () => confirmarEliminar({
+        titulo: 'Eliminar movimiento',
+        texto: 'Vas a eliminar "' + (MOV[m.tipo] || m.tipo) + '" por ' + money(Math.abs(m.monto)) + (m.tipo.startsWith('TRANSFERENCIA') ? '. Se eliminará la transferencia completa (salida y entrada).' : '.') + ' El saldo de la cuenta cambiará y no se puede deshacer. ¿Confirmas?',
+        onOk: async (motivo) => { await q(sb.rpc('eliminar_movimiento_cuenta', { p_id: m.id, p_motivo: motivo })); close(); toast('Movimiento eliminado'); ctx.refresh(); } }) } }, 'Eliminar movimiento'));
+      else box.append(h('p', { class: 'small muted' }, 'Este movimiento nace de un cobro, préstamo, gasto, caja o liquidación: se corrige eliminando esa operación desde su módulo.'));
+    }
     if (staff) cargar();
     async function cargar() {
       try {
@@ -302,12 +311,19 @@ export async function liquidacion(ctx) {
   view.replaceChildren(h('div', { class: 'stack' },
     h('div', { class: 'hero' }, h('div', { class: 'ad', style: { marginTop: 0 } }, pagada ? 'Pagado' : 'Total a pagar'), h('div', { class: 'due' }, h('div', { class: 'lbl' }, pagada ? 'Liquidación pagada' : 'Pendiente de pago'), h('div', { class: 'plate' }, money(pagada ? l.neto_pagado : neto)))),
     h('div', { class: 'panel' },
-      linea('Pago base', money(l.pago_base)), linea('Comisión de papelería', '+ ' + money(l.comision_papeleria)), linea('Faltantes de caja', '− ' + money(l.total_faltantes)),
+      linea('Pago base', money(l.pago_base)), linea('Comisión de papelería (' + Number(l.pct_comision || 40) + ' %)', '+ ' + money(l.comision_papeleria)), linea('Faltantes de caja', '− ' + money(l.total_faltantes)),
       aj.map((x) => h('div', { class: 'line' }, h('div', { class: 'grow' }, h('div', {}, x.tipo === 'BONO' ? 'Bono' : 'Descuento'), h('div', { class: 'small muted' }, x.motivo || '')), h('div', { class: 'amt ' + (x.tipo === 'BONO' ? 'pos' : 'neg') }, (x.tipo === 'BONO' ? '+ ' : '− ') + money(x.valor)))),
       h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Neto'), h('b', { class: 'amt' }, money(pagada ? l.neto_pagado : neto)))),
-    pagada ? h('p', { class: 'muted small' }, 'Pagada el ' + fdate(l.fecha_pago) + ' por ' + (l.metodo === 'EFECTIVO' ? 'efectivo' : 'transferencia') + '.')
+    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Papelería y comisión del cobrador'),
+      linea('Papelería cobrada en el periodo', money(l.papeleria_periodo)),
+      h('p', { class: 'small muted', style: { margin: '2px 0 6px' } }, 'Toda la papelería entra a la empresa. Al cobrador se le reconoce el ' + Number(l.pct_comision || 40) + ' % como comisión, y se le paga en efectivo.'),
+      linea('Comisión sugerida (' + Number(l.pct_comision || 40) + ' %)', money(l.comision_sugerida != null ? l.comision_sugerida : l.comision_papeleria)),
+      linea('Comisión que se pagará', money(l.comision_papeleria)),
+      h('button', { class: 'btn small', type: 'button', on: { click: () => detalleComision(l) } }, 'Ver préstamos con papelería')),
+    pagada ? h('p', { class: 'muted small' }, 'Pagada el ' + fdate(l.fecha_pago) + ' en efectivo.')
       : h('div', { class: 'stack' },
         h('button', { class: 'btn', on: { click: () => editarBase(l, ctx) } }, icon('edit'), 'Editar pago base'),
+        h('button', { class: 'btn', on: { click: () => editarComision(l, ctx) } }, icon('edit'), 'Editar comisión de papelería'),
         h('button', { class: 'btn', on: { click: () => agregarAjuste(l, ctx) } }, icon('plus'), 'Agregar descuento o bono'),
         h('div', { class: 'actionbar' }, h('button', { class: 'btn primary block', on: { click: () => pagar(l, neto, ctx) } }, 'Pagar ' + money(neto))))));
 }
@@ -334,17 +350,38 @@ function agregarAjuste(l, ctx) {
       close(); toast('Guardado'); ctx.refresh();
     }) } }, 'Guardar')));
 }
-function pagar(l, neto, ctx) {
-  const cuentasOk = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
-  const metodo = segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { box.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; });
-  const cuenta = selectEl(cuentasOk.map((c) => [c.id, c.nombre]));
-  const box = h('div', { style: { display: 'none' } }, field('Cuenta de la que sale', cuenta));
-  sheet('Pagar liquidación', (close) => h('div', {}, h('p', { class: 'muted', style: { marginBottom: '12px' } }, nombreDe(l.cobrador_id) + ' · ' + money(neto)),
-    h('div', { class: 'field' }, h('label', {}, 'Cómo se paga'), metodo), box,
+function editarComision(l, ctx) {
+  const v = moneyInput({ 'aria-label': 'Comisión de papelería' }); v.value = num(l.comision_papeleria);
+  const sug = Number(l.comision_sugerida != null ? l.comision_sugerida : l.comision_papeleria);
+  sheet('Comisión de papelería', (close) => h('div', {},
+    h('p', { class: 'muted', style: { marginBottom: '12px' } }, 'Sugerida por el sistema: ' + money(sug) + ' (' + Number(l.pct_comision || 40) + ' % de ' + money(l.papeleria_periodo) + '). Puedes ajustarla antes de pagar.'),
+    field('Comisión que se le pagará en efectivo', v),
+    h('button', { class: 'btn block', type: 'button', on: { click: () => { v.value = num(sug); } } }, 'Volver al valor sugerido'),
     h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
-      const m = metodo.get();
-      if (m === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No hay cuentas disponibles.');
-      await q(sb.rpc('pagar_liquidacion', { p_liq: l.id, p_metodo: m, p_cuenta: m === 'TRANSFERENCIA' ? cuenta.value : null }));
+      await q(sb.rpc('editar_comision_liquidacion', { p_liq: l.id, p_valor: moneyVal(v) || 0 }));
+      close(); toast('Comisión actualizada'); ctx.refresh();
+    }) } }, 'Guardar comisión')));
+}
+
+async function detalleComision(l) {
+  const pct = Number(l.pct_comision || 40);
+  sheet('Préstamos con papelería', () => { const box = h('div', {}, skeleton(3)); (async () => {
+    try {
+      const r = await q(sb.from('prestamos').select('fecha_desembolso,valor_prestado,valor_papeleria,tipo_operacion,clientes(nombre_completo)').eq('cobrador_id', l.cobrador_id)
+        .gte('fecha_desembolso', l.fecha_inicio).lte('fecha_desembolso', l.fecha_fin).eq('paga_comision', true).eq('descuenta_papeleria', true).gt('valor_papeleria', 0).order('fecha_desembolso'));
+      box.replaceChildren(r.length ? h('div', { class: 'stack' }, h('div', { class: 'panel' }, r.map((p) => h('div', { class: 'line' },
+        h('div', { class: 'grow' }, h('b', {}, (p.clientes && p.clientes.nombre_completo) || 'Cliente'), h('div', { class: 'small muted' }, fdate(p.fecha_desembolso) + ' · prestó ' + money(p.valor_prestado) + ' · papelería ' + money(p.valor_papeleria))),
+        h('div', { class: 'amt' }, money(Math.round(Number(p.valor_papeleria) * pct / 100)))))),
+        linea('Papelería total', money(sum(r, 'valor_papeleria'))), linea('Comisión (' + pct + ' %)', money(Math.round(sum(r, 'valor_papeleria') * pct / 100)))) : h('p', { class: 'muted' }, 'No hay préstamos con papelería en este periodo.'));
+    } catch (e) { box.replaceChildren(h('p', { class: 'err' }, 'No se pudo cargar el detalle.')); }
+  })(); return box; });
+}
+
+function pagar(l, neto, ctx) {
+  sheet('Pagar liquidación', (close) => h('div', {}, h('p', { class: 'muted', style: { marginBottom: '12px' } }, nombreDe(l.cobrador_id) + ' · ' + money(neto)),
+    h('p', {}, 'Se paga en efectivo y sale del efectivo de la oficina.'),
+    h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+      await q(sb.rpc('pagar_liquidacion', { p_liq: l.id, p_metodo: 'EFECTIVO', p_cuenta: null }));
       close(); toast('Liquidación pagada'); ctx.refresh();
-    }) } }, 'Confirmar pago')));
+    }) } }, 'Confirmar pago en efectivo')));
 }
