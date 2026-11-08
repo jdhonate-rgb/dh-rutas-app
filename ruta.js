@@ -218,6 +218,7 @@ export async function tarjeta(ctx) {
       pr.estado === 'PAGADO' ? h('a', { class: 'btn small primary', href: '#/prestamo-nuevo?tipo=RENOVACION&anterior=' + pr.id }, 'Renovar') : null,
       pr.estado === 'ACTIVO' && Number(pr.saldo) > 0 ? h('a', { class: 'btn small', href: '#/prestamo-nuevo?tipo=REFINANCIACION&anterior=' + pr.id }, 'Refinanciar') : null,
       pr.estado === 'ACTIVO' || pr.estado === 'PAGADO' ? h('a', { class: 'btn small', href: '#/prestamo-nuevo?cliente=' + cli.id }, 'Nuevo préstamo') : null,
+      ['NUEVO', 'RENOVACION'].includes(pr.tipo_operacion) && pr.estado === 'ACTIVO' ? h('button', { class: 'btn small', on: { click: () => corregirPrestamo(pr, ctx) } }, 'Corregir préstamo') : null,
       h('button', { class: 'btn small', on: { click: () => editarFechas(pr, ctx) } }, 'Editar fechas'),
       h('button', { class: 'btn small', on: { click: () => opciones(pr, ctx) } }, 'Papelería / comisión'),
       h('button', { class: 'btn small danger', on: { click: () => confirmarEliminar({ titulo: 'Eliminar préstamo', texto: 'Se elimina el préstamo con sus cuotas y pagos, y se reversan los movimientos de dinero (desembolso, papelería, cobros). Esta acción no se puede deshacer.', onOk: async (m) => { await q(sb.rpc('eliminar_prestamo', { p_prestamo: pr.id, p_motivo: m })); toast('Préstamo eliminado'); location.hash = '#/prestamos'; } }) } }, 'Eliminar préstamo')) : null,
@@ -290,6 +291,33 @@ function opciones(pr, ctx) {
       await q(sb.rpc('editar_prestamo_opciones', { p_prestamo: pr.id, p_descuenta_papeleria: dinero ? pap.get() === 'SI' : null, p_paga_comision: com.get() === 'SI' }));
       close(); toast('Cambios guardados'); ctx.refresh();
     }) } }, 'Guardar')));
+}
+
+// Supervisora / administrador: corregir un préstamo mal creado (valor, interés, cuotas, modalidad, fechas) sin eliminarlo a mano.
+// Solo si no tiene cobros registrados. Internamente se rehace el préstamo y la contabilidad queda como si se hubiera creado bien.
+function corregirPrestamo(pr, ctx) {
+  const val = moneyInput({ 'aria-label': 'Valor prestado' }); val.value = num(pr.valor_prestado);
+  const pct = h('input', { type: 'number', inputmode: 'decimal', step: '0.01', min: '0', value: pr.porcentaje_interes });
+  const cuo = h('input', { type: 'number', inputmode: 'numeric', min: '1', value: pr.numero_cuotas });
+  const mod = selectEl([['DIARIO', 'Diario'], ['SEMANAL', 'Semanal'], ['QUINCENAL', 'Quincenal'], ['MENSUAL', 'Mensual']], pr.modalidad);
+  const fd = h('input', { type: 'date', value: pr.fecha_desembolso });
+  const fp = h('input', { type: 'date', value: pr.fecha_primer_pago || '' });
+  const pap = moneyInput({ 'aria-label': 'Papelería en pesos' });
+  const mot = h('input', { type: 'text', placeholder: 'Ej.: error al digitar el valor' });
+  sheet('Corregir préstamo', (close) => h('div', { class: 'stack' },
+    h('p', { class: 'hint panelnote' }, 'Para cuando el préstamo se creó con un dato equivocado. Se rehace con los datos nuevos y se reajustan el desembolso y la papelería. Solo se puede si el cliente aún no tiene cobros registrados.'),
+    field('Valor prestado', val), field('Interés (%)', pct), field('Número de cuotas', cuo), field('Modalidad de cobro', mod),
+    field('Fecha del préstamo (desembolso)', fd),
+    field('Fecha del primer cobro', fp),
+    field('Papelería en pesos (déjala vacía para usar el % de la empresa)', pap),
+    field('Motivo de la corrección', mot),
+    h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
+      const v = moneyVal(val);
+      if (!v || v <= 0) throw new Error('Escribe el valor del préstamo.');
+      if (!(Number(cuo.value) >= 1)) throw new Error('Escribe el número de cuotas.');
+      const nuevo = await q(sb.rpc('corregir_prestamo', { p_prestamo: pr.id, p_valor: v, p_porcentaje: Number(pct.value || 0), p_modalidad: mod.value, p_cuotas: Number(cuo.value), p_fecha_desembolso: fd.value || null, p_fecha_primer_pago: fp.value || null, p_papeleria_valor: moneyVal(pap) || null, p_motivo: mot.value.trim() || null }));
+      toast('Préstamo corregido'); close(); location.hash = '#/prestamo/' + nuevo;
+    }) } }, 'Guardar corrección')));
 }
 
 // Supervisora / administrador: corregir la fecha del préstamo y del primer cobro (las cuotas se recalculan; los cobros hechos se conservan)
