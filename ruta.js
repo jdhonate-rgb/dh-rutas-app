@@ -6,7 +6,14 @@ const TIPOS = { NUEVO: 'Nuevo', MIGRACION: 'Migración', RENOVACION: 'Renovació
 
 const F = { vista: 'hoy', mod: 'TODAS', buscar: '', cobrador: 'TODOS' };
 const MODS = [['TODAS', 'Todas'], ['DIARIO', 'Diario'], ['SEMANAL', 'Semanal'], ['QUINCENAL', 'Quincenal'], ['MENSUAL', 'Mensual']];
-const VISTAS = [['todos', 'Todos'], ['hoy', 'Hoy'], ['atrasados', 'Atrasados'], ['pagados', 'Pagados']];
+// Estilos de «vencido» (se inyectan aquí para no depender de otro archivo)
+(() => {
+  if (document.getElementById('st-venc')) return;
+  const st = document.createElement('style'); st.id = 'st-venc';
+  st.textContent = '.item.s-venc{background:#F6ECF8}.item.s-venc::before{background:#7B1FA2;width:8px}.item .meta .venc{color:#7B1FA2;font-weight:800}.plate.venc{background:#7B1FA2;color:#fff}.plate.venc small{color:#F3E5F5}.alerta-venc{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:1.5px solid #7B1FA2;background:#F3E5F5;color:#4A148C;border-radius:14px;padding:12px 14px;margin:0 0 12px;font:inherit}.alerta-venc svg{flex:none;color:#7B1FA2}.alerta-venc .small{font-size:13px;margin-top:2px}@media (prefers-color-scheme:dark){.item.s-venc{background:#2A1630}.alerta-venc{background:#2A1630;color:#E1BEE7}}';
+  document.head.appendChild(st);
+})();
+const VISTAS = [['todos', 'Todos'], ['hoy', 'Hoy'], ['atrasados', 'Atrasados'], ['vencidos', 'Vencidos'], ['pagados', 'Pagados']];
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
 export async function ruta(ctx) {
@@ -68,6 +75,7 @@ export async function ruta(ctx) {
       todos: b,
       hoy: b.filter((r) => r.es_hoy).sort((x, y) => norm(x.barrio).localeCompare(norm(y.barrio)) || x.nombre_completo.localeCompare(y.nombre_completo)),
       atrasados: b.filter((r) => r.atrasado).sort((x, y) => y.dias_atraso - x.dias_atraso),
+      vencidos: b.filter((r) => r.vencido).sort((x, y) => y.dias_vencido - x.dias_vencido),
       pagados: b.filter((r) => r.pagado_hoy)
     };
     clear(tabs).append(...VISTAS.map(([v, t]) => h('button', { class: F.vista === v ? 'on' : '', role: 'tab', on: { click: () => { F.vista = v; pintarLista(); } } }, t, h('b', {}, String(sets[v].length)))));
@@ -78,10 +86,12 @@ export async function ruta(ctx) {
       h('button', { class: 'stat good tap', type: 'button', on: { click: () => detalleRuta('Cobrado hoy', b.filter((r) => Number(r.cobrado_hoy || 0) > 0), 'cobrado_hoy', staff) } }, h('div', { class: 'v' }, money(cobrado)), h('div', { class: 'l' }, 'Cobrado hoy')));
     const items = sets[F.vista];
     clear(list);
+    if (sets.vencidos.length && F.vista !== 'vencidos') list.append(h('button', { class: 'alerta-venc', type: 'button', on: { click: () => { F.vista = 'vencidos'; pintarLista(); } } }, icon('alert', 20), h('div', { class: 'grow' }, h('b', {}, sets.vencidos.length === 1 ? '1 préstamo vencido' : sets.vencidos.length + ' préstamos vencidos'), h('div', { class: 'small' }, 'Su plazo ya terminó y aún tienen saldo. Toca para verlos.'))));
     if (!items.length) {
       const msg = {
         hoy: ['Nada para cobrar hoy', 'Cuando haya cuotas con fecha de hoy aparecerán aquí.'],
         atrasados: ['No hay clientes atrasados', 'Buen trabajo: todos están al día.'],
+        vencidos: ['No hay préstamos vencidos', 'Aquí aparecen los préstamos cuyo plazo ya terminó y todavía tienen saldo.'],
         pagados: ['Aún no hay cobros hoy', 'Los clientes que paguen hoy aparecen aquí. Mañana esta lista empieza limpia.'],
         todos: ['No hay préstamos activos', F.buscar || F.mod !== 'TODAS' ? 'Prueba quitando los filtros.' : 'Cuando se creen préstamos aparecerán aquí.']
       }[F.vista];
@@ -105,9 +115,10 @@ function detalleRuta(titulo, items, campo, staff) {
 }
 function fila(r, staff) {
   const debe = Number(r.valor_a_cobrar || 0);
-  const st = debe > 0 ? (r.atrasado ? 's-late' : 's-hoy') : (r.pagado_hoy ? 's-ok' : '');
+  const st = r.vencido ? 's-venc' : debe > 0 ? (r.atrasado ? 's-late' : 's-hoy') : (r.pagado_hoy ? 's-ok' : '');
   let placa;
-  if (debe > 0) placa = h('div', { class: 'plate' }, money(debe), h('small', {}, r.atrasado ? 'debe' : 'cobrar hoy'));
+  if (r.vencido) placa = h('div', { class: 'plate venc' }, money(staff ? r.saldo : debe), h('small', {}, 'vencido'));
+  else if (debe > 0) placa = h('div', { class: 'plate' }, money(debe), h('small', {}, r.atrasado ? 'debe' : 'cobrar hoy'));
   else if (r.pagado_hoy) placa = h('div', { class: 'plate paid' }, money(r.cobrado_hoy), h('small', {}, 'pagó hoy'));
   else placa = h('div', { class: 'plate quiet' }, money(r.valor_cuota), h('small', {}, 'cuota'));
   return h('a', { class: 'item ' + st, href: '#/prestamo/' + r.prestamo_id },
@@ -116,7 +127,8 @@ function fila(r, staff) {
       h('div', { class: 'meta' },
         r.barrio ? h('span', {}, r.barrio) : null,
         h('span', {}, cap(r.modalidad)),
-        r.atrasado ? h('span', { class: 'late' }, r.dias_atraso + (r.dias_atraso === 1 ? ' día' : ' días') + ' de atraso') : null,
+        r.vencido ? h('span', { class: 'venc' }, 'Vencido hace ' + r.dias_vencido + (r.dias_vencido === 1 ? ' día' : ' días')) : null,
+        r.atrasado && !r.vencido ? h('span', { class: 'late' }, r.dias_atraso + (r.dias_atraso === 1 ? ' día' : ' días') + ' de atraso') : null,
         debe > 0 && r.pagado_hoy ? h('span', { class: 'okc' }, 'Abonó ' + money(r.cobrado_hoy)) : null,
         staff && r.cobrador_id ? h('span', {}, nombreDe(r.cobrador_id)) : null)),
     placa);
@@ -155,6 +167,8 @@ export async function tarjeta(ctx) {
   const pct = pr.numero_cuotas ? Math.round((pr.cuotas_pagadas / pr.numero_cuotas) * 100) : 0;
   const pagadoHoy = pagos.filter((p) => p.estado_pago === 'VIGENTE' && p.fecha_pago === hoy).reduce((a, p) => a + Number(p.valor), 0);
 
+  const dv = pr.estado === 'ACTIVO' && Number(pr.saldo) > 0 && pr.fecha_final && pr.fecha_final < hoy ? Math.round((new Date(hoy) - new Date(pr.fecha_final)) / 864e5) : 0;
+  const alertaVenc = dv > 0 ? h('div', { class: 'alerta-venc', role: 'alert' }, icon('alert', 22), h('div', { class: 'grow' }, h('b', {}, 'Préstamo vencido'), h('div', { class: 'small' }, 'El plazo terminó el ' + fdate(pr.fecha_final) + ' (hace ' + dv + (dv === 1 ? ' día' : ' días') + ') y el cliente aún debe. Insiste en el cobro y avisa a la supervisión.'))) : null;
   const hero = h('div', { class: 'hero' },
     h('div', { class: 'nm' }, cli.nombre_completo),
     dir ? h('div', { class: 'ad' }, dir) : null,
@@ -206,7 +220,7 @@ export async function tarjeta(ctx) {
       h('div', { class: 'amt', style: { minWidth: '84px', textAlign: 'right' } }, money(c.valor_programado)));
   }));
   view.replaceChildren(h('div', { class: 'stack' },
-    hero, prog,
+    alertaVenc, hero, prog,
     kv,
     h('div', { class: 'section' }, h('h3', {}, 'Cuotas'), grid),
     h('div', { class: 'section' }, h('h3', {}, 'Pagos'), hist),
