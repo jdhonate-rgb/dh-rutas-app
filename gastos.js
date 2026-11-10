@@ -31,22 +31,24 @@ export async function gastos(ctx) {
   }) } }, icon('plus'), 'Guardar gasto');
 
   const lista = h('div', {});
-  const desde = h('input', { type: 'date', value: staff ? inicioSemana(hoyCO()) : addDays(hoyCO(), -14) });
+  const desde = h('input', { type: 'date', value: staff ? inicioSemana(hoyCO()) : hoyCO() });
   const hasta = h('input', { type: 'date', value: hoyCO() });
-  const filtro = h('div', { class: 'grid2' }, field('Desde', desde), field('Hasta', hasta));
+  // El cobrador solo ve los gastos de hoy (sin filtro de fechas); la supervisión conserva el filtro.
+  const filtro = staff ? h('div', { class: 'grid2' }, field('Desde', desde), field('Hasta', hasta)) : null;
   desde.addEventListener('change', () => cargar()); hasta.addEventListener('change', () => cargar());
 
   view.replaceChildren(h('div', { class: 'stack' },
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Nuevo gasto'), field('Categoría', cat), field('Detalle', det), field('Valor', val), metodo ? h('div', { class: 'field' }, h('label', {}, 'Cómo se pagó'), metodo) : null, cuentaBox, guardar,
       staff ? null : h('p', { class: 'hint', style: { marginTop: '10px' } }, 'Los gastos en efectivo se descuentan de tu caja al cuadrar con la supervisora. Los gastos por transferencia salen de la cuenta que elijas y no afectan tu efectivo.')),
-    h('div', { class: 'section' }, h('h3', {}, 'Gastos registrados'), filtro, lista)));
+    h('div', { class: 'section' }, h('h3', {}, staff ? 'Gastos registrados' : 'Gastos de hoy'), filtro, lista)));
 
   async function cargar() {
     lista.replaceChildren(skeleton(3));
     try {
+      if (!staff) { desde.value = hoyCO(); hasta.value = hoyCO(); }
       const rows = await q(sb.from('gastos').select('*').gte('fecha', desde.value).lte('fecha', hasta.value).order('fecha', { ascending: false }).limit(300));
       const total = rows.reduce((a, r) => a + Number(r.valor), 0);
-      if (!rows.length) { lista.replaceChildren(empty('Sin gastos en este rango', 'Los gastos que registres aparecerán aquí.')); return; }
+      if (!rows.length) { lista.replaceChildren(empty(staff ? 'Sin gastos en este rango' : 'Aún no registras gastos hoy', 'Los gastos que registres aparecerán aquí.')); return; }
       lista.replaceChildren(
         h('div', { class: 'row between', style: { margin: '4px 2px 8px' } }, h('span', { class: 'muted' }, rows.length + (rows.length === 1 ? ' gasto' : ' gastos')), h('b', {}, money(total))),
         h('div', { class: 'panel' }, rows.map((r) => h('div', { class: 'line' },

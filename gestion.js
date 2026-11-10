@@ -1,5 +1,5 @@
 // Clientes, préstamos y cuadre de caja (supervisión y administración).
-import { h, clear, icon, money, fdate, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, addDays, addMonths, num, clean, confirmarEliminar } from './lib.js';
+import { h, clear, icon, money, fdate, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, addDays, addMonths, num, clean, confirmarEliminar } from './lib.js';
 import { S, sb, q, isAdmin, isStaff, nombreDe, cfgNum, esCob } from './state.js';
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -111,27 +111,77 @@ export async function clienteNuevo(ctx) {
 export async function prestamos(ctx) {
   const { view } = ctx;
   ctx.setTop('Préstamos', { actions: [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }] });
-  view.replaceChildren(skeleton(6));
-  let rows;
-  try { rows = await q(sb.from('v_prestamos_resumen').select('id,nombre_completo,modalidad,estado,saldo,valor_prestado,dias_atraso,cobrador_id,fecha_desembolso,cuotas_pagadas,numero_cuotas,tipo_operacion').order('fecha_desembolso', { ascending: false }).limit(1000)); }
-  catch (e) { fail(e); view.replaceChildren(empty('No se pudieron cargar los préstamos', 'Inténtalo de nuevo.')); return; }
-  let estado = 'ACTIVO', texto = '';
+  const staff = isStaff();
+  const hoy = hoyCO();
+  const TIPOS = [['TODOS', 'Todos'], ['NUEVO', 'Nuevos'], ['RENOVACION', 'Renovados'], ['REFINANCIACION', 'Refinanciados'], ['MIGRACION', 'Migrados']];
+  const ETIQ = { NUEVO: 'Nuevo', RENOVACION: 'Renovado', REFINANCIACION: 'Refinanciado', MIGRACION: 'Migrado' };
+  let estado = 'TODOS', tipo = 'TODOS', texto = '', cob = '', periodo = 'TODO', rows = [];
+  const desde = h('input', { type: 'date', 'aria-label': 'Desde' });
+  const hasta = h('input', { type: 'date', 'aria-label': 'Hasta' });
+  const cobSel = staff ? selectEl([['', 'Todos los cobradores'], ...S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO').map((p) => [p.id, p.nombre])], '') : null;
   const lista = h('div', {});
-  const chips = h('div', { class: 'chips' }, [['ACTIVO', 'Activos'], ['PAGADO', 'Pagados'], ['ARCHIVADO', 'Archivados'], ['TODOS', 'Todos']].map(([v, t]) =>
-    h('button', { class: 'chip' + (estado === v ? ' on' : ''), on: { click: (e) => { estado = v; [...chips.children].forEach((x) => x.classList.remove('on')); e.currentTarget.classList.add('on'); pintar(); } } }, t)));
+  const resumen = h('div', {});
+
+  function rango(p) {
+    if (p === 'HOY') return [hoy, hoy];
+    if (p === 'SEMANA') return [inicioSemana(hoy), hoy];
+    if (p === 'QUINCENA') { const [y, m, d] = hoy.split('-'); return d <= '15' ? [y + '-' + m + '-01', y + '-' + m + '-15'] : [y + '-' + m + '-16', new Date(Date.UTC(+y, +m, 0)).toISOString().substring(0, 10)]; }
+    if (p === 'MES') { const [y, m] = hoy.split('-'); return [y + '-' + m + '-01', new Date(Date.UTC(+y, +m, 0)).toISOString().substring(0, 10)]; }
+    return ['', ''];
+  }
+  const chip = (txt, on, fn) => h('button', { class: 'chip' + (on ? ' on' : ''), type: 'button', on: { click: fn } }, txt);
+  const chipsPeriodo = h('div', { class: 'chips' });
+  const chipsEstado = h('div', { class: 'chips' });
+  const chipsTipo = h('div', { class: 'chips' });
+  function pintarChips(conteo) {
+    chipsPeriodo.replaceChildren(...[['TODO', 'Todo'], ['HOY', 'Hoy'], ['SEMANA', 'Semana'], ['QUINCENA', 'Quincena'], ['MES', 'Mes'], ['PERSONAL', 'Personalizado']].map(([v, t]) =>
+      chip(t, periodo === v, () => { periodo = v; if (v !== 'PERSONAL') { const [d, hh] = rango(v); desde.value = d; hasta.value = hh; } cargar(); })));
+    chipsEstado.replaceChildren(...[['TODOS', 'Todos'], ['ACTIVO', 'Activos'], ['PAGADO', 'Pagados'], ['ARCHIVADO', 'Archivados']].map(([v, t]) =>
+      chip(t, estado === v, () => { estado = v; pintar(); })));
+    chipsTipo.replaceChildren(...TIPOS.map(([v, t]) => chip(t + (conteo ? ' (' + (conteo[v] || 0) + ')' : ''), tipo === v, () => { tipo = v; pintar(); })));
+  }
   const buscar = h('input', { type: 'search', placeholder: 'Buscar cliente', 'aria-label': 'Buscar', on: { input: (e) => { texto = norm(e.target.value); pintar(); } } });
+  desde.addEventListener('change', () => { periodo = 'PERSONAL'; cargar(); });
+  hasta.addEventListener('change', () => { periodo = 'PERSONAL'; cargar(); });
+  if (cobSel) cobSel.addEventListener('change', () => { cob = cobSel.value; cargar(); });
+
+  async function cargar() {
+    lista.replaceChildren(skeleton(5)); resumen.replaceChildren();
+    try {
+      let qy = sb.from('v_prestamos_resumen').select('id,nombre_completo,modalidad,estado,saldo,valor_prestado,dias_atraso,cobrador_id,fecha_desembolso,cuotas_pagadas,numero_cuotas,tipo_operacion').order('fecha_desembolso', { ascending: false }).limit(1000);
+      if (desde.value) qy = qy.gte('fecha_desembolso', desde.value);
+      if (hasta.value) qy = qy.lte('fecha_desembolso', hasta.value);
+      if (cob) qy = qy.eq('cobrador_id', cob);
+      rows = await q(qy);
+    } catch (e) { fail(e); lista.replaceChildren(empty('No se pudieron cargar los préstamos', 'Inténtalo de nuevo.')); return; }
+    pintar();
+  }
+
   function pintar() {
-    const f = rows.filter((r) => (estado === 'TODOS' || (estado === 'ARCHIVADO' ? ARCHIVADOS.includes(r.estado) : r.estado === estado)) && (!texto || norm(r.nombre_completo).includes(texto)));
+    const base = rows.filter((r) => (estado === 'TODOS' || (estado === 'ARCHIVADO' ? ARCHIVADOS.includes(r.estado) : r.estado === estado)) && (!texto || norm(r.nombre_completo).includes(texto)));
+    const conteo = { TODOS: base.length }; TIPOS.slice(1).forEach(([v]) => { conteo[v] = base.filter((r) => r.tipo_operacion === v).length; });
+    pintarChips(conteo);
+    const f = tipo === 'TODOS' ? base : base.filter((r) => r.tipo_operacion === tipo);
     const saldo = sum(f.filter((r) => r.estado === 'ACTIVO'), 'saldo');
-    if (!f.length) { lista.replaceChildren(empty('No hay préstamos', 'Crea el primero con el botón Nuevo préstamo.')); return; }
-    lista.replaceChildren(h('div', { class: 'row between muted small', style: { margin: '6px 2px 8px' } }, h('span', {}, f.length + (f.length === 1 ? ' préstamo' : ' préstamos')), estado === 'ACTIVO' || estado === 'TODOS' ? h('b', {}, 'Saldo ' + money(saldo)) : null),
+    // Detalle por tipo (del periodo y filtros elegidos)
+    resumen.replaceChildren(h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Detalle del periodo' + (desde.value || hasta.value ? ' · ' + (desde.value ? fdate(desde.value) : '…') + ' al ' + (hasta.value ? fdate(hasta.value) : '…') : '')),
+      ...TIPOS.slice(1).map(([v, t]) => { const g = base.filter((r) => r.tipo_operacion === v); return h('div', { class: 'line' }, h('div', { class: 'grow' }, t), h('div', { class: 'muted small', style: { marginRight: '10px' } }, g.length + (g.length === 1 ? ' préstamo' : ' préstamos')), h('b', {}, money(sum(g, 'valor_prestado')))); }),
+      h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Total prestado'), h('b', {}, money(sum(base, 'valor_prestado'))))));
+    if (!f.length) { lista.replaceChildren(empty('No hay préstamos', 'Cambia las fechas o los filtros, o crea uno con el botón Nuevo préstamo.')); return; }
+    lista.replaceChildren(h('div', { class: 'row between muted small', style: { margin: '6px 2px 8px' } }, h('span', {}, f.length + (f.length === 1 ? ' préstamo' : ' préstamos') + (rows.length >= 1000 ? ' (se muestran los 1000 más recientes: acota las fechas)' : '')), h('b', {}, 'Saldo ' + money(saldo))),
       h('div', { class: 'ledger' }, f.slice(0, 300).map((r) => h('a', { class: 'item ' + (r.dias_atraso > 0 && r.estado === 'ACTIVO' ? 's-late' : r.estado === 'ACTIVO' ? 's-hoy' : 's-ok'), href: '#/prestamo/' + r.id },
-        h('div', { class: 'grow' }, h('div', { class: 'name' }, r.nombre_completo), h('div', { class: 'meta' }, h('span', {}, cap(r.modalidad)), h('span', {}, r.cuotas_pagadas + '/' + r.numero_cuotas + ' cuotas'), r.estado === 'ACTIVO' && r.dias_atraso > 0 ? h('span', { class: 'late' }, r.dias_atraso + ' d de atraso') : null, h('span', {}, nombreDe(r.cobrador_id)), r.tipo_operacion !== 'NUEVO' ? h('span', { class: 'tag' }, TIPOS[r.tipo_operacion]) : null)),
+        h('div', { class: 'grow' }, h('div', { class: 'name' }, r.nombre_completo),
+          h('div', { class: 'meta' }, h('span', { class: 'tag' }, ETIQ[r.tipo_operacion] || cap(r.tipo_operacion || '')), h('span', {}, cap(r.modalidad)), h('span', {}, r.cuotas_pagadas + '/' + r.numero_cuotas + ' cuotas'),
+            r.estado === 'ACTIVO' && r.dias_atraso > 0 ? h('span', { class: 'late' }, r.dias_atraso + ' d de atraso') : null, h('span', {}, nombreDe(r.cobrador_id) || '')),
+          h('div', { class: 'meta' }, h('span', {}, fdate(r.fecha_desembolso)), h('span', {}, 'Prestó ' + money(r.valor_prestado)))),
         h('div', { class: 'plate quiet' }, r.estado === 'ACTIVO' ? money(r.saldo) : cap(r.estado), h('small', {}, r.estado === 'ACTIVO' ? 'saldo' : money(r.valor_prestado)))))));
   }
-  view.replaceChildren(h('div', { class: 'stack' }, h('div', {}, h('div', { class: 'search' }, icon('search', 20), buscar), chips), lista,
+  view.replaceChildren(h('div', { class: 'stack' },
+    h('div', {}, h('div', { class: 'search' }, icon('search', 20), buscar), chipsPeriodo, h('div', { class: 'grid2' }, field('Desde', desde), field('Hasta', hasta)), cobSel ? field('Cobrador', cobSel) : null, chipsEstado, chipsTipo),
+    resumen, lista,
     h('a', { class: 'btn primary fab', href: '#/prestamo-nuevo' }, icon('plus'), 'Nuevo préstamo')));
-  pintar();
+  pintarChips(null);
+  cargar();
 }
 
 function primerPago(mod, desembolso) {
