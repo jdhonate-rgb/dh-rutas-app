@@ -13,8 +13,10 @@ export async function gastos(ctx) {
   const cat = selectEl(CATS.map((c) => [c, c]), 'Gasolina');
   const det = h('input', { type: 'text', placeholder: 'Detalle (opcional)', maxlength: '120' });
   const val = moneyInput();
-  const cuentasOk = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA');
-  const metodo = staff ? segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; }) : null;
+  const permTr = !staff && S.profile && S.profile.gastos_transferencia === true;
+  const misCuentas = new Set((S.profile && S.profile.cuentas_permitidas) || []);
+  const cuentasOk = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA' && (staff || misCuentas.has(c.id)));
+  const metodo = (staff || (permTr && cuentasOk.length)) ? segmented([['EFECTIVO', 'Efectivo'], ['TRANSFERENCIA', 'Transferencia']], 'EFECTIVO', (v) => { cuentaBox.style.display = v === 'TRANSFERENCIA' ? '' : 'none'; }) : null;
   const cuenta = selectEl(cuentasOk.map((c) => [c.id, c.nombre]));
   const cuentaBox = h('div', { style: { display: 'none' } }, field('Cuenta de la que sale', cuenta));
   const guardar = h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
@@ -36,7 +38,7 @@ export async function gastos(ctx) {
 
   view.replaceChildren(h('div', { class: 'stack' },
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Nuevo gasto'), field('Categoría', cat), field('Detalle', det), field('Valor', val), metodo ? h('div', { class: 'field' }, h('label', {}, 'Cómo se pagó'), metodo) : null, cuentaBox, guardar,
-      staff ? null : h('p', { class: 'hint', style: { marginTop: '10px' } }, 'Los gastos en efectivo se descuentan de tu caja al cuadrar con la supervisora.')),
+      staff ? null : h('p', { class: 'hint', style: { marginTop: '10px' } }, 'Los gastos en efectivo se descuentan de tu caja al cuadrar con la supervisora. Los gastos por transferencia salen de la cuenta que elijas y no afectan tu efectivo.')),
     h('div', { class: 'section' }, h('h3', {}, 'Gastos registrados'), filtro, lista)));
 
   async function cargar() {

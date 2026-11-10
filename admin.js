@@ -59,6 +59,7 @@ function editar(p, ctx) {
   const abrirCajas = segmented([['NO', 'No'], ['SI', 'Sí']], p.puede_abrir_cajas ? 'SI' : 'NO');
   const verResumen = segmented([['NO', 'No'], ['SI', 'Sí']], p.puede_ver_resumen ? 'SI' : 'NO');
   const gastosPerm = segmented([['SI', 'Sí'], ['NO', 'No']], p.puede_registrar_gastos === false ? 'NO' : 'SI');
+  const gastosTr = segmented([['SI', 'Sí'], ['NO', 'No']], p.gastos_transferencia ? 'SI' : 'NO');
   const papEdit = segmented([['NO', 'No: se descuenta el % de la empresa'], ['SI', 'Sí: decide si cobra y cuánto']], p.papeleria_editable ? 'SI' : 'NO');
   const cobraCom = segmented([['SI', 'Sí'], ['NO', 'No']], p.cobra_comision === false ? 'NO' : 'SI');
   const permisos = h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Permisos del cobrador'),
@@ -71,6 +72,7 @@ function editar(p, ctx) {
     h('div', { class: 'field' }, h('label', {}, 'Puede gestionar cajas (abrir, editar base, cerrar)'), abrirCajas, h('p', { class: 'hint' }, 'Las de otros cobradores y la suya. Le aparece "Cajas del equipo" en el menú.')),
     h('div', { class: 'field' }, h('label', {}, 'Puede ver el resumen de toda la operación'), verResumen, h('p', { class: 'hint' }, 'En Auditar rutas aparece la opción "Todos los cobradores" con los totales juntos.')),
     h('div', { class: 'field' }, h('label', {}, 'Puede registrar gastos'), gastosPerm),
+    h('div', { class: 'field' }, h('label', {}, 'Gastos por transferencia'), gastosTr, h('p', { class: 'hint' }, 'Sí: puede registrar gastos pagados por transferencia, solo desde las cuentas que marques arriba en «Cuentas permitidas».')),
     h('div', { class: 'field' }, h('label', {}, 'Papelería al cliente'), papEdit,
       h('p', { class: 'hint' }, '"No": se descuenta siempre el % de la empresa y no ve opciones de papelería ni comisión. "Sí": puede cobrar o no, y fijar un valor en pesos.')),
     h('div', { class: 'field' }, h('label', {}, 'Cobra comisión por papelería'), cobraCom,
@@ -91,7 +93,7 @@ function editar(p, ctx) {
     h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
       if (!clean(nombre.value)) throw new Error('Escribe el nombre.');
       if (p.id === S.profile.id && (estado.get() !== 'ACTIVO' || rol.value !== 'ADMINISTRADOR')) throw new Error('No puedes quitarte tu propio acceso de administrador.');
-      await q(sb.from('profiles').update({ nombre: clean(nombre.value), telefono: clean(tel.value) || null, rol: rol.value, estado: estado.get(), ver_cuentas: ver.get() === 'SI', cuenta_recaudo_id: rec.value || null, cuentas_permitidas: checks.filter(([, cb]) => cb.checked).map(([c]) => c.id), puede_desembolsar: dueno.get() === 'SI', puede_crear_prestamos: crearPrest.get() === 'SI', puede_crear_clientes: crearCli.get() === 'SI', puede_auditar: auditar.get() === 'SI', puede_ver_resumen: verResumen.get() === 'SI', puede_registrar_gastos: gastosPerm.get() === 'SI', puede_abrir_cajas: abrirCajas.get() === 'SI', papeleria_editable: papEdit.get() === 'SI', cobra_comision: cobraCom.get() === 'SI', es_cobrador: rol.value === 'SUPERVISOR' && cobra.get() === 'SI', ruta_solo_propia: rol.value === 'SUPERVISOR' && cobra.get() === 'SI' && rutaSolo.get() === 'SI' }).eq('id', p.id));
+      await q(sb.from('profiles').update({ nombre: clean(nombre.value), telefono: clean(tel.value) || null, rol: rol.value, estado: estado.get(), ver_cuentas: ver.get() === 'SI', cuenta_recaudo_id: rec.value || null, gastos_transferencia: gastosTr.get() === 'SI', cuentas_permitidas: checks.filter(([, cb]) => cb.checked).map(([c]) => c.id), puede_desembolsar: dueno.get() === 'SI', puede_crear_prestamos: crearPrest.get() === 'SI', puede_crear_clientes: crearCli.get() === 'SI', puede_auditar: auditar.get() === 'SI', puede_ver_resumen: verResumen.get() === 'SI', puede_registrar_gastos: gastosPerm.get() === 'SI', puede_abrir_cajas: abrirCajas.get() === 'SI', papeleria_editable: papEdit.get() === 'SI', cobra_comision: cobraCom.get() === 'SI', es_cobrador: rol.value === 'SUPERVISOR' && cobra.get() === 'SI', ruta_solo_propia: rol.value === 'SUPERVISOR' && cobra.get() === 'SI' && rutaSolo.get() === 'SI' }).eq('id', p.id));
       close(); toast('Usuario actualizado'); ctx.refresh();
     }) } }, 'Guardar')));
 }

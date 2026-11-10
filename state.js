@@ -23,7 +23,7 @@ export const cfgNum = (k, d = 0) => (S.cfg[k] != null && S.cfg[k] !== '' ? Numbe
 export async function cargarApoyo() {
   const [cfg, profiles, rutas] = await Promise.all([
     q(sb.from('configuracion').select('clave,valor')),
-    q(sb.from('profiles').select('id,nombre,email,telefono,rol,estado,ver_cuentas,cuenta_recaudo_id,cuentas_permitidas,puede_desembolsar,puede_crear_prestamos,puede_auditar,puede_abrir_cajas,puede_ver_resumen,puede_registrar_gastos,puede_crear_clientes,papeleria_editable,cobra_comision,es_cobrador,ruta_solo_propia')),
+    q(sb.from('profiles').select('id,nombre,email,telefono,rol,estado,ver_cuentas,cuenta_recaudo_id,cuentas_permitidas,puede_desembolsar,puede_crear_prestamos,puede_auditar,puede_abrir_cajas,puede_ver_resumen,puede_registrar_gastos,gastos_transferencia,puede_crear_clientes,papeleria_editable,cobra_comision,es_cobrador,ruta_solo_propia')),
     q(sb.from('rutas').select('id,nombre,zona,descripcion,cobrador_id,estado').order('nombre'))
   ]);
   S.cfg = Object.fromEntries(cfg.map((r) => [r.clave, r.valor]));
