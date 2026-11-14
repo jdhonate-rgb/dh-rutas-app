@@ -1,6 +1,6 @@
 // Clientes, préstamos y cuadre de caja (supervisión y administración).
 import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, addDays, addMonths, num, clean, confirmarEliminar } from './lib.js';
-import { conceptosDia, calcLinea, SEL_PRESTAMOS, SEL_PAGOS, SEL_GASTOS } from './movs.js';
+import { bloqueTransferencias, calcLinea, SEL_PRESTAMOS, SEL_PAGOS, SEL_GASTOS } from './movs.js';
 import { S, sb, q, isAdmin, isStaff, nombreDe, cfgNum, esCob } from './state.js';
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -432,8 +432,12 @@ export async function caja(ctx) {
       cuerpo.push(h('p', { class: 'muted', style: { margin: '10px 0' } }, 'Aún no se ha abierto la caja de este cobrador.'),
         h('button', { class: 'btn primary block', on: { click: () => abrir(c, d) } }, 'Abrir caja'));
     }
-    // Estructura completa del día: ingresos y egresos en efectivo, efectivo a entregar y lo que va por transferencia
-    cuerpo.push(h('div', { class: 'section', style: { marginTop: '4px' } }, conceptosDia({ base, ents, pagosEf: pagosCaja, pagosTr, gastos, prests, totEf: cerrada ? Number(cj.total_cobros_efectivo) : ef, totGs: cerrada ? Number(cj.total_gastos) : gs, esperado: cerrada ? Number(cj.total_esperado) : undefined })));
+    // Igual para todos los cobradores: base, cobros, gastos, préstamos con su efectivo y efectivo esperado
+    cuerpo.push(h('div', { class: 'kv', style: { marginTop: '10px' } }, kvc('Base entregada', money(base)), kvc('Cobros en efectivo', money(cerrada ? cj.total_cobros_efectivo : ef)), kvc('Gastos en efectivo', money(cerrada ? cj.total_gastos : gs)),
+        ents.length ? kvc('Entregado al cobrador para préstamos', money(entM)) : null, ents.length ? kvc('Entregado a clientes', '− ' + money(entC)) : null),
+      ents.length ? h('div', { class: 'small', style: { margin: '6px 2px' } }, h('div', { class: 'muted' }, 'Préstamos entregados con su efectivo:'), ents.map((e) => h('div', { class: 'line' }, h('span', { class: 'grow' }, ((e.prestamos && e.prestamos.clientes && e.prestamos.clientes.nombre_completo) || 'Cliente') + (Number(e.monto) > 0 ? ' (con ' + money(e.monto) + ' adicionales del cobrador)' : '')), h('b', { class: 'amt' }, money(e.valor_cliente))))) : null,
+      h('div', { class: 'line', style: { marginTop: '6px' } }, h('b', { class: 'grow' }, 'Efectivo esperado'), h('b', { class: 'amt' }, money(esperado))),
+      bloqueTransferencias({ pagosTr, gastos, prests }));
     if (cj) {
       if (cerrada) {
         const df = Number(cj.diferencia);
