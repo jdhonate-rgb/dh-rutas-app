@@ -2,6 +2,7 @@
 import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, addDays, confirmarEliminar } from './lib.js';
 import { S, sb, q, isStaff, nombreDe, esCob } from './state.js';
 import { cuentaSesion } from './admin.js';
+import { conceptosDia, SEL_PRESTAMOS, SEL_PAGOS, SEL_GASTOS } from './movs.js';
 
 const CATS = ['Gasolina', 'Alimentación', 'Reparación de moto', 'Transporte', 'Papelería', 'Otros'];
 
@@ -74,11 +75,13 @@ async function resumenCobrador(ctx) {
   const hoy = hoyCO();
   let efDisp = null; try { const x = await q(sb.rpc('mi_efectivo_disponible')); efDisp = x == null ? null : Number(x); } catch { efDisp = null; }
   let rd = null; try { rd = await q(sb.rpc('mi_resumen_dia', { p_fecha: hoy })); } catch { rd = null; }
-  const [pagos, gastosHoy, cajas, ruta] = await Promise.all([
+  const [pagos, gastosHoy, cajas, ruta, prestQ, entQ] = await Promise.all([
     q(sb.from('pagos').select('*,clientes(nombre_completo)').eq('fecha_pago', hoy).eq('estado_pago', 'VIGENTE').order('hora_pago', { ascending: false })),
     q(sb.from('gastos').select('*').eq('fecha', hoy)),
     q(sb.from('cajas').select('*').eq('fecha', hoy)),
-    q(sb.from('v_ruta').select('prestamo_id,nombre_completo,barrio,valor_a_cobrar,dias_atraso').gt('valor_a_cobrar', 0).order('nombre_completo'))
+    q(sb.from('v_ruta').select('prestamo_id,nombre_completo,barrio,valor_a_cobrar,dias_atraso').gt('valor_a_cobrar', 0).order('nombre_completo')),
+    q(sb.from('prestamos').select(SEL_PRESTAMOS).eq('fecha_desembolso', hoy).order('created_at')).catch(() => null),
+    q(sb.from('caja_entregas').select('prestamo_id,monto,valor_cliente,cajas!inner(fecha),prestamos(clientes(nombre_completo))').eq('cajas.fecha', hoy)).catch(() => null)
   ]);
   const caja = cajas[0];
   const efectivo = sum(pagos.filter((p) => p.metodo === 'EFECTIVO'), 'valor');
@@ -88,7 +91,7 @@ async function resumenCobrador(ctx) {
   const base = caja ? Number(caja.base_inicial) : 0;
   const entregar = efDisp != null ? efDisp : base + efectivo - gast;   // incluye préstamos hechos desde su caja
   const prest = (rd && rd.prestamos) || [];
-  const pe = prest.filter((p) => p.medio !== 'TRANSFERENCIA'), pt = prest.filter((p) => p.medio === 'TRANSFERENCIA');
+  const prestHoy = prestQ || prest.map((p) => ({ id: p.prestamo_id, valor_prestado: p.valor, valor_papeleria: p.papeleria, valor_entregado: p.entregado, medio_desembolso: p.medio, tipo_operacion: p.tipo, clientes: { nombre_completo: p.cliente } }));
   const pctCom = rd ? Number(rd.pct_comision) : 40;
   const entregaCaja = Math.max(base + efectivo - gast - entregar, 0);
   const faltan = ruta.filter((r) => Number(r.valor_a_cobrar) > 0);
@@ -98,19 +101,9 @@ async function resumenCobrador(ctx) {
       h('div', { class: 'due' }, h('div', { class: 'lbl' }, caja && caja.estado === 'CERRADA' ? 'Caja cerrada' : caja ? 'Caja abierta' : 'Caja sin abrir'), h('div', { class: 'plate' }, money(entregar)))),
     h('div', { class: 'strip' },
       statBtn('Cobrado hoy', money(efectivo + transf), 'good', () => detallePagos('Cobrado hoy', pagos)),
-      statBtn('Falta por cobrar', money(sum(faltan, 'valor_a_cobrar')), '', () => detalleFaltan(faltan)),
-      statBtn('En efectivo', money(efectivo), '', () => detallePagos('Cobrado en efectivo', pagos.filter((p) => p.metodo === 'EFECTIVO'))),
-      statBtn('Por transferencia', money(transf), '', () => detallePagos('Cobrado por transferencia', pagos.filter((p) => p.metodo === 'TRANSFERENCIA'))),
-      statBtn('Gastos', money(sum(gastosHoy, 'valor')), 'bad', () => detalleGastos('Gastos de hoy', gastosHoy))),
-    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Ingresos'),
-      linea('Base recibida', money(base)), linea('Cobros en efectivo', '+ ' + money(efectivo)), linea('Cobros por transferencia (van a la cuenta)', money(transf))),
-    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Egresos'),
-      linea('Gastos en efectivo', '− ' + money(gast)),
-      gastTr > 0 ? linea('Gastos por transferencia (salen de la cuenta)', '− ' + money(gastTr)) : null,
-      linea('Préstamos entregados en efectivo (' + pe.length + ')', '− ' + money(sum(pe, 'entregado'))),
-      linea('Préstamos entregados por transferencia (' + pt.length + ') · salen de la cuenta', money(sum(pt, 'entregado'))),
-      entregaCaja > 0 ? linea('Préstamos entregados desde tu caja', '− ' + money(entregaCaja)) : null),
-    panelPrestamos(prest.map((p) => ({ id: p.prestamo_id, cliente: p.cliente, tipo: p.tipo, valor: p.valor, papeleria: p.papeleria, entregado: p.entregado, medio: p.medio }))),
+      statBtn('Falta por cobrar', money(sum(faltan, 'valor_a_cobrar')), '', () => detalleFaltan(faltan))),
+    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Movimientos del día'),
+      conceptosDia({ pagosEf: pagos.filter((p) => p.metodo === 'EFECTIVO'), pagosTr: pagos.filter((p) => p.metodo === 'TRANSFERENCIA'), gastos: gastosHoy, prests: prestHoy, base, ents: entQ, esperado: caja && caja.estado === 'CERRADA' ? Number(caja.total_esperado) : (entQ ? undefined : entregar) })),
     S.profile && S.profile.cobra_comision === false ? null : h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Comisión por papelería'),
       linea('Papelería de tus préstamos hoy', money(rd ? rd.papeleria_hoy : 0)),
       linea('Comisión de hoy (' + pctCom + ' %)', money(rd ? rd.comision_hoy : 0)),
@@ -119,65 +112,59 @@ async function resumenCobrador(ctx) {
     h('div', { class: 'panel' },
       h('div', { class: 'line' }, h('b', { class: 'grow' }, 'Efectivo a entregar'), h('b', { class: 'amt' }, money(entregar))),
       caja && caja.estado === 'CERRADA' ? h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Resultado del cuadre'), h('b', { class: 'amt ' + (Number(caja.diferencia) < 0 ? 'neg' : 'pos') }, Number(caja.diferencia) === 0 ? 'Cuadrado' : (Number(caja.diferencia) < 0 ? 'Faltan ' : 'Sobran ') + money(Math.abs(caja.diferencia)))) : null),
-    h('div', { class: 'section' }, h('h3', {}, 'Cobros de hoy (' + pagos.length + ')'),
-      pagos.length ? h('div', { class: 'panel' }, pagos.map((p) => h('div', { class: 'line' },
-        h('div', { class: 'grow' }, h('div', {}, h('b', {}, p.clientes ? p.clientes.nombre_completo : 'Cliente')), h('div', { class: 'small muted' }, ftime(p.hora_pago) + ' · ' + (p.metodo === 'EFECTIVO' ? 'Efectivo' : 'Transferencia'))),
-        h('div', { class: 'amt pos' }, money(p.valor))))) : empty('Todavía no hay cobros', 'Cuando registres un cobro aparecerá aquí.')),
     cuentaSesion(ctx)));
 }
 
 async function resumenStaff(ctx) {
   const dia = h('input', { type: 'date', value: hoyCO() });
+  const cobs = S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO');
+  const sel = selectEl([['', 'Todos'], ...cobs.map((c) => [c.id, c.nombre])], '');
   const out = h('div', {});
-  ctx.view.replaceChildren(h('div', { class: 'stack' }, field('Día', dia), out));
+  ctx.view.replaceChildren(h('div', { class: 'stack' }, h('div', { class: 'row', style: { gap: '10px', alignItems: 'flex-end' } }, h('div', { style: { flex: 1 } }, field('Día', dia)), h('div', { style: { flex: 1 } }, field('Cobrador', sel))), out));
+  let datos = null;
   dia.addEventListener('change', () => cargar());
+  sel.addEventListener('change', () => pintar());
   async function cargar() {
     out.replaceChildren(skeleton(3));
     try {
-      const [res, gas, cajas, pend, pgs, pres] = await Promise.all([
-        q(sb.from('v_resumen_dia').select('*').eq('fecha', dia.value)),
-        q(sb.from('gastos').select('*').eq('fecha', dia.value)),
-        q(sb.from('cajas').select('cobrador_id,estado,diferencia').eq('fecha', dia.value)),
-        dia.value === hoyCO() ? q(sb.from('v_ruta').select('cobrador_id,prestamo_id,nombre_completo,barrio,dias_atraso,valor_a_cobrar')) : Promise.resolve([]),
-        q(sb.from('pagos').select('*,clientes(nombre_completo)').eq('fecha_pago', dia.value).eq('estado_pago', 'VIGENTE').order('hora_pago', { ascending: false })),
-        q(sb.from('prestamos').select('id,valor_prestado,valor_papeleria,valor_entregado,medio_desembolso,tipo_operacion,cobrador_id,created_at,clientes(nombre_completo)').eq('fecha_desembolso', dia.value).order('created_at'))
+      const [gas, cajas, pend, pgs, pres, ents] = await Promise.all([
+        q(sb.from('gastos').select(SEL_GASTOS).eq('fecha', dia.value)),
+        q(sb.from('cajas').select('cobrador_id,estado,diferencia,base_inicial,total_esperado').eq('fecha', dia.value)),
+        dia.value === hoyCO() ? q(sb.from('v_ruta').select('cobrador_id,valor_a_cobrar')) : Promise.resolve([]),
+        q(sb.from('pagos').select(SEL_PAGOS).eq('fecha_pago', dia.value).eq('estado_pago', 'VIGENTE').order('hora_pago', { ascending: false })),
+        q(sb.from('prestamos').select(SEL_PRESTAMOS).eq('fecha_desembolso', dia.value).order('created_at')),
+        q(sb.from('caja_entregas').select('prestamo_id,monto,valor_cliente,cajas!inner(fecha,cobrador_id),prestamos(clientes(nombre_completo))').eq('cajas.fecha', dia.value))
       ]);
-      const prestDia = pres.map((p) => ({ id: p.id, cliente: p.clientes ? p.clientes.nombre_completo : 'Cliente', tipo: p.tipo_operacion, valor: p.valor_prestado, papeleria: p.valor_papeleria, entregado: p.valor_entregado, medio: p.medio_desembolso, quien: nombreDe(p.cobrador_id) }));
-      const cobs = S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO');
-      const filas = cobs.map((c) => {
-        const r = res.find((x) => x.cobrador_id === c.id) || {};
-        const g = sum(gas.filter((x) => x.usuario_id === c.id && x.metodo === 'EFECTIVO'), 'valor');
-        const cj = cajas.find((x) => x.cobrador_id === c.id);
-        return { c, n: Number(r.num_cobros || 0), ef: Number(r.efectivo || 0), tr: Number(r.transferencias || 0), g, caja: cj, falta: sum(pend.filter((x) => x.cobrador_id === c.id), 'valor_a_cobrar') };
-      });
-      const tot = { ef: sum(filas, 'ef'), tr: sum(filas, 'tr'), g: sum(gas, 'valor') };
-      out.replaceChildren(h('div', { class: 'stack' },
-        h('div', { class: 'strip' },
-          statBtn('Cobrado', money(tot.ef + tot.tr), 'good', () => detallePagos('Cobrado ' + fdate(dia.value), pgs, true)),
-          statBtn('Gastos', money(tot.g), 'bad', () => detalleGastos('Gastos ' + fdate(dia.value), gas, true)),
-          statBtn('Efectivo', money(tot.ef), '', () => detallePagos('Efectivo ' + fdate(dia.value), pgs.filter((p) => p.metodo === 'EFECTIVO'), true)),
-          statBtn('Transferencias', money(tot.tr), '', () => detallePagos('Transferencias ' + fdate(dia.value), pgs.filter((p) => p.metodo === 'TRANSFERENCIA'), true))),
-        panelPrestamos(prestDia, true),
-        filas.length ? filas.map((f) => h('div', { class: 'panel' },
-          h('div', { class: 'row between' }, h('b', {}, f.c.nombre), h('span', { class: 'tag ' + (f.caja ? (f.caja.estado === 'CERRADA' ? 'ok' : 'warn') : '') }, f.caja ? (f.caja.estado === 'CERRADA' ? 'Caja cerrada' : 'Caja abierta') : 'Sin caja')),
-          h('div', { class: 'kv', style: { marginTop: '10px' } }, kvb('Cobros', f.n + '', () => detallePagos('Cobros de ' + f.c.nombre, pgs.filter((p) => p.cobrador_id === f.c.id), true)), kvb('Total cobrado', money(f.ef + f.tr), () => detallePagos('Cobrado por ' + f.c.nombre, pgs.filter((p) => p.cobrador_id === f.c.id), true)), kvb('Efectivo', money(f.ef), () => detallePagos('Efectivo de ' + f.c.nombre, pgs.filter((p) => p.cobrador_id === f.c.id && p.metodo === 'EFECTIVO'), true)), kvb('Transferencias', money(f.tr), () => detallePagos('Transferencias de ' + f.c.nombre, pgs.filter((p) => p.cobrador_id === f.c.id && p.metodo === 'TRANSFERENCIA'), true)), kvb('Gastos en efectivo', money(f.g), () => detalleGastos('Gastos de ' + f.c.nombre, gas.filter((x) => x.usuario_id === f.c.id), true)), dia.value === hoyCO() ? kvb('Falta por cobrar', money(f.falta), () => detalleFaltan(pend.filter((x) => x.cobrador_id === f.c.id && Number(x.valor_a_cobrar) > 0))) : kvc('Cuadre', f.caja && f.caja.estado === 'CERRADA' ? (Number(f.caja.diferencia) === 0 ? 'Cuadrado' : money(f.caja.diferencia)) : '—')))) : empty('No hay cobradores activos', 'Activa cobradores desde Usuarios.')));
+      datos = { gas, cajas, pend, pgs, pres, ents };
+      pintar();
     } catch (e) { fail(e); out.replaceChildren(empty('No se pudo cargar', 'Inténtalo de nuevo.')); }
+  }
+  function pintar() {
+    if (!datos) return;
+    const { gas, cajas, pend, pgs, pres, ents } = datos;
+    const lista = sel.value ? cobs.filter((c) => c.id === sel.value) : cobs;
+    const ids = new Set(lista.map((c) => c.id));
+    const pg = pgs.filter((p) => ids.has(p.cobrador_id)), gs = gas.filter((g) => ids.has(g.usuario_id));
+    const ef = sumv(pg.filter((p) => p.metodo === 'EFECTIVO'), 'valor'), tr = sumv(pg.filter((p) => p.metodo === 'TRANSFERENCIA'), 'valor');
+    out.replaceChildren(h('div', { class: 'stack' },
+      h('div', { class: 'strip' },
+        statBtn('Cobrado', money(ef + tr), 'good', () => detallePagos('Cobrado ' + fdate(dia.value), pg, true)),
+        statBtn('Gastos', money(sumv(gs, 'valor')), 'bad', () => detalleGastos('Gastos ' + fdate(dia.value), gs, true))),
+      lista.length ? lista.map((c) => {
+        const cj = cajas.find((x) => x.cobrador_id === c.id);
+        const mios = pgs.filter((p) => p.cobrador_id === c.id);
+        const falta = sumv(pend.filter((x) => x.cobrador_id === c.id), 'valor_a_cobrar');
+        return h('div', { class: 'panel' },
+          h('div', { class: 'row between' }, h('b', { style: { fontSize: '18px' } }, c.nombre), h('span', { class: 'tag ' + (cj ? (cj.estado === 'CERRADA' ? 'ok' : 'warn') : '') }, cj ? (cj.estado === 'CERRADA' ? 'Caja cerrada' : 'Caja abierta') : 'Sin caja')),
+          dia.value === hoyCO() ? h('div', { class: 'small muted', style: { marginTop: '4px' } }, 'Falta por cobrar: ' + money(falta)) : null,
+          conceptosDia({ pagosEf: mios.filter((p) => p.metodo === 'EFECTIVO'), pagosTr: mios.filter((p) => p.metodo === 'TRANSFERENCIA'), gastos: gas.filter((g) => g.usuario_id === c.id), prests: pres.filter((p) => p.cobrador_id === c.id), base: cj ? cj.base_inicial : 0, ents: ents.filter((e) => e.cajas.cobrador_id === c.id), esperado: cj && cj.estado === 'CERRADA' ? Number(cj.total_esperado) : undefined }));
+      }) : empty('No hay cobradores activos', 'Activa a los cobradores desde Usuarios.')));
   }
   cargar();
 }
 
-// Préstamos realizados del día, separados por medio de entrega (efectivo / transferencia)
-function panelPrestamos(lista, conQuien) {
-  const ef = lista.filter((p) => p.medio !== 'TRANSFERENCIA'), tr = lista.filter((p) => p.medio === 'TRANSFERENCIA');
-  const bloque = (titulo, arr) => h('div', {}, h('div', { class: 'line' }, h('b', { class: 'grow' }, titulo + ' (' + arr.length + ')'), h('b', { class: 'amt' }, money(sum(arr, 'valor')))),
-    arr.length ? arr.map((p) => h('a', { class: 'line', href: '#/prestamo/' + p.id },
-      h('div', { class: 'grow' }, h('b', {}, p.cliente), h('div', { class: 'small muted' }, (p.tipo || '') + (conQuien && p.quien ? ' · ' + p.quien : '') + ' · papelería ' + money(p.papeleria) + ' · entregado ' + money(p.entregado))),
-      h('div', { class: 'amt' }, money(p.valor)))) : h('p', { class: 'small muted', style: { margin: '2px 0 8px' } }, 'Ninguno'));
-  return h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Préstamos realizados (' + lista.length + ' · ' + money(sum(lista, 'valor')) + ')'),
-    bloque('En efectivo', ef), bloque('Por transferencia', tr));
-}
-
 const sum = (arr, k) => arr.reduce((a, r) => a + Number(r[k] || 0), 0);
+const sumv = sum;
 const statBtn = (l, v, cls, fn) => h('button', { type: 'button', class: 'stat tap ' + (cls || ''), on: { click: fn } }, h('div', { class: 'v' }, v), h('div', { class: 'l' }, l, ' ›'));
 function detallePagos(titulo, pagos, conQuien) {
   const nomCta = (id) => (S.cuentas.find((c) => c.id === id) || {}).nombre || 'Cuenta';

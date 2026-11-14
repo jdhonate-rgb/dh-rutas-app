@@ -1,5 +1,6 @@
 // Clientes, préstamos y cuadre de caja (supervisión y administración).
-import { h, clear, icon, money, fdate, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, addDays, addMonths, num, clean, confirmarEliminar } from './lib.js';
+import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, addDays, addMonths, num, clean, confirmarEliminar } from './lib.js';
+import { conceptosDia, calcLinea, SEL_PRESTAMOS, SEL_PAGOS, SEL_GASTOS } from './movs.js';
 import { S, sb, q, isAdmin, isStaff, nombreDe, cfgNum, esCob } from './state.js';
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -118,7 +119,7 @@ export async function prestamos(ctx) {
   let estado = 'TODOS', tipo = 'TODOS', texto = '', cob = '', periodo = 'TODO', rows = [];
   const desde = h('input', { type: 'date', 'aria-label': 'Desde' });
   const hasta = h('input', { type: 'date', 'aria-label': 'Hasta' });
-  const cobSel = staff ? selectEl([['', 'Todos los cobradores'], ...S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO').map((p) => [p.id, p.nombre])], '') : null;
+  const cobSel = staff ? selectEl([['', 'Todos'], ...S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO').map((p) => [p.id, p.nombre])], '') : null;
   const lista = h('div', {});
   const resumen = h('div', {});
 
@@ -392,48 +393,53 @@ export async function caja(ctx) {
   const { view } = ctx;
   ctx.setTop('Cuadre de caja', { actions: [{ icon: 'refresh', label: 'Actualizar', fn: () => ctx.refresh() }] });
   const dia = h('input', { type: 'date', value: hoyCO() });
+  const cobsAll = S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO');
+  const sel = selectEl([['', 'Todos'], ...cobsAll.map((c) => [c.id, c.nombre])], '');
   const out = h('div', {});
-  view.replaceChildren(h('div', { class: 'stack' }, field('Día', dia), out));
+  view.replaceChildren(h('div', { class: 'stack' }, h('div', { class: 'row', style: { gap: '10px', alignItems: 'flex-end' } }, h('div', { style: { flex: 1 } }, field('Día', dia)), h('div', { style: { flex: 1 } }, field('Cobrador', sel))), out));
   dia.addEventListener('change', () => cargar());
+  sel.addEventListener('change', () => cargar());
 
   async function cargar() {
     out.replaceChildren(skeleton(3));
     const d = dia.value;
     try {
-      const [cajas, pagos, gastos, ents] = await Promise.all([
+      const [cajas, pagos, gastos, ents, prests] = await Promise.all([
         q(sb.from('cajas').select('*').eq('fecha', d)),
-        q(sb.from('pagos').select('cobrador_id,valor,metodo,caja_id').eq('fecha_pago', d).eq('estado_pago', 'VIGENTE')),
-        q(sb.from('gastos').select('usuario_id,valor,metodo').eq('fecha', d).eq('metodo', 'EFECTIVO')),
-        q(sb.from('caja_entregas').select('*,cajas!inner(fecha,cobrador_id),prestamos(clientes(nombre_completo))').eq('cajas.fecha', d))
+        q(sb.from('pagos').select(SEL_PAGOS).eq('fecha_pago', d).eq('estado_pago', 'VIGENTE')),
+        q(sb.from('gastos').select(SEL_GASTOS).eq('fecha', d)),
+        q(sb.from('caja_entregas').select('*,cajas!inner(fecha,cobrador_id),prestamos(clientes(nombre_completo))').eq('cajas.fecha', d)),
+        q(sb.from('prestamos').select(SEL_PRESTAMOS).eq('fecha_desembolso', d).order('created_at'))
       ]);
-      const cobs = S.profiles.filter((p) => esCob(p) && p.estado === 'ACTIVO');
+      const cobs = cobsAll.filter((p) => !sel.value || p.id === sel.value);
       if (!cobs.length) { out.replaceChildren(empty('No hay cobradores activos', 'Activa a los cobradores desde Usuarios.')); return; }
-      out.replaceChildren(h('div', { class: 'stack' }, cobs.map((c) => tarjetaCaja(c, cajas.find((x) => x.cobrador_id === c.id), pagos.filter((p) => p.cobrador_id === c.id), gastos.filter((g) => g.usuario_id === c.id), d, ents.filter((e) => e.cajas.cobrador_id === c.id)))));
+      out.replaceChildren(h('div', { class: 'stack' }, cobs.map((c) => tarjetaCaja(c, cajas.find((x) => x.cobrador_id === c.id), pagos.filter((p) => p.cobrador_id === c.id), gastos.filter((g) => g.usuario_id === c.id), d, ents.filter((e) => e.cajas.cobrador_id === c.id), prests.filter((p) => p.cobrador_id === c.id)))));
     } catch (e) { fail(e); out.replaceChildren(empty('No se pudo cargar la caja', 'Inténtalo de nuevo.')); }
   }
 
-  function tarjetaCaja(c, cj, pagos, gastos, d, ents) {
-    const ef = sum(pagos.filter((p) => p.metodo === 'EFECTIVO' && (!cj || cj.estado === 'ABIERTA' ? !p.caja_id : p.caja_id === cj.id)), 'valor');
-    const tr = sum(pagos.filter((p) => p.metodo === 'TRANSFERENCIA'), 'valor');
-    const gs = sum(gastos, 'valor');
+  function tarjetaCaja(c, cj, pagos, gastos, d, ents, prests) {
     const cerrada = cj && cj.estado === 'CERRADA';
+    const pagosCaja = pagos.filter((p) => p.metodo === 'EFECTIVO' && (!cj || cj.estado === 'ABIERTA' ? !p.caja_id : p.caja_id === cj.id));
+    const pagosTr = pagos.filter((p) => p.metodo === 'TRANSFERENCIA');
+    const gEf = gastos.filter((g) => g.metodo !== 'TRANSFERENCIA'), gTr = gastos.filter((g) => g.metodo === 'TRANSFERENCIA');
+    const ef = sum(pagosCaja, 'valor'), tr = sum(pagosTr, 'valor'), gs = sum(gEf, 'valor'), gt = sum(gTr, 'valor');
     const base = cj ? Number(cj.base_inicial) : 0;
-    const entM = sum(ents, 'monto'), entC = sum(ents, 'valor_cliente');
-    const esperado = cerrada ? Number(cj.total_esperado) : base + entM - entC + ef - gs;
+    const entM = sum(ents, 'monto'), entC = sum(ents, 'valor_cliente'), neto = entM - entC;
+    const esperado = cerrada ? Number(cj.total_esperado) : base + neto + ef - gs;
+    const desdeCaja = new Set(ents.map((e) => e.prestamo_id));
     const cuerpo = [];
     if (!cj) {
       cuerpo.push(h('p', { class: 'muted', style: { margin: '10px 0' } }, 'Aún no se ha abierto la caja de este cobrador.'),
         h('button', { class: 'btn primary block', on: { click: () => abrir(c, d) } }, 'Abrir caja'));
-    } else {
-      cuerpo.push(h('div', { class: 'kv', style: { marginTop: '10px' } }, kvc('Base entregada', money(base)), kvc('Cobros en efectivo', money(cerrada ? cj.total_cobros_efectivo : ef)), kvc('Gastos en efectivo', money(cerrada ? cj.total_gastos : gs)), kvc('Transferencias', money(tr)),
-          ents.length ? kvc('Entregado al cobrador para préstamos', money(entM)) : null, ents.length ? kvc('Entregado a clientes', '− ' + money(entC)) : null),
-        ents.length ? h('div', { class: 'small', style: { margin: '6px 2px' } }, h('div', { class: 'muted' }, 'Préstamos entregados:'), ents.map((e) => h('div', { class: 'line' }, h('span', { class: 'grow' }, ((e.prestamos && e.prestamos.clientes && e.prestamos.clientes.nombre_completo) || 'Cliente') + (Number(e.monto) > 0 ? ' (con ' + money(e.monto) + ' adicionales del cobrador)' : '')), h('b', { class: 'amt' }, money(e.valor_cliente))))) : null,
-        h('div', { class: 'line', style: { marginTop: '6px' } }, h('b', { class: 'grow' }, 'Efectivo esperado'), h('b', { class: 'amt' }, money(esperado))));
+    }
+    // Estructura completa del día: ingresos y egresos en efectivo, efectivo a entregar y lo que va por transferencia
+    cuerpo.push(h('div', { class: 'section', style: { marginTop: '4px' } }, conceptosDia({ base, ents, pagosEf: pagosCaja, pagosTr, gastos, prests, totEf: cerrada ? Number(cj.total_cobros_efectivo) : ef, totGs: cerrada ? Number(cj.total_gastos) : gs, esperado: cerrada ? Number(cj.total_esperado) : undefined })));
+    if (cj) {
       if (cerrada) {
         const df = Number(cj.diferencia);
         cuerpo.push(h('div', { class: 'line' }, h('span', { class: 'grow' }, 'Entregó ' + money(cj.dinero_entregado)), h('b', { class: 'amt ' + (df < 0 ? 'neg' : df > 0 ? 'pos' : '') }, df === 0 ? 'Cuadrado' : (df < 0 ? 'Faltan ' : 'Sobran ') + money(Math.abs(df)))));
       } else {
-        cuerpo.push(h('button', { class: 'btn primary block', style: { marginTop: '8px' }, on: { click: () => cerrar(cj, esperado, c) } }, 'Cerrar caja'));
+        cuerpo.push(h('button', { class: 'btn primary block', style: { marginTop: '8px' }, on: { click: () => cerrar(cj, esperado, c, { base, ef, gs, neto, gt, tr, nPrest: prests.length }) } }, 'Cerrar caja'));
       }
     }
     if (cj) cuerpo.push(h('div', { class: 'row', style: { gap: '8px', marginTop: '8px', flexWrap: 'wrap' } },
@@ -467,7 +473,7 @@ export async function caja(ctx) {
         close(); toast('Caja abierta'); cargar();
       }) } }, 'Abrir caja')));
   }
-  function cerrar(cj, esperado, c) {
+  function cerrar(cj, esperado, c, r) {
     const ent = moneyInput({ 'aria-label': 'Dinero entregado' });
     ent.value = num(esperado);
     const res = h('p', { class: 'small', style: { margin: '-4px 0 14px', fontWeight: '700' } });
@@ -475,7 +481,11 @@ export async function caja(ctx) {
     const pinta = () => { const df = moneyVal(ent) - esperado; res.textContent = df === 0 ? 'Cuadra exacto.' : df < 0 ? 'Faltan ' + money(-df) + '. Se descontará en la liquidación.' : 'Sobran ' + money(df) + '.'; res.style.color = df < 0 ? 'var(--bad)' : df > 0 ? 'var(--ok)' : 'var(--muted)'; };
     ent.addEventListener('input', pinta); pinta();
     sheet('Cerrar caja de ' + c.nombre, (close) => h('div', {},
-      h('p', { class: 'muted', style: { marginBottom: '12px' } }, 'Efectivo esperado: ' + money(esperado)),
+      h('div', { class: 'panel', style: { marginBottom: '14px' } }, h('div', { class: 'small muted', style: { fontWeight: '700' } }, 'ANTES DE CERRAR, REVISA'),
+        calcLinea('Base entregada', money(r.base)), calcLinea('+ Cobros en efectivo', money(r.ef)), calcLinea('− Gastos en efectivo', money(r.gs)),
+        r.neto ? calcLinea('± Préstamos con su efectivo (neto)', (r.neto >= 0 ? '' : '− ') + money(Math.abs(r.neto))) : null,
+        calcLinea('Efectivo que debe entregar', money(esperado), true),
+        h('p', { class: 'small muted', style: { margin: '6px 0 0' } }, 'Aparte (no cambian el efectivo): cobros por transferencia ' + money(r.tr) + ' · gastos por transferencia ' + money(r.gt) + ' · préstamos del día ' + r.nPrest + '.')),
       field('Dinero entregado', ent), res, field('Nota', obs),
       h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
         const df = await q(sb.rpc('cerrar_caja', { p_caja: cj.id, p_entregado: moneyVal(ent), p_obs: obs.value.trim() || null }));
