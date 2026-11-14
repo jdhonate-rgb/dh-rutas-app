@@ -1,6 +1,6 @@
 // Clientes, préstamos y cuadre de caja (supervisión y administración).
 import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, hoyCO, inicioSemana, addDays, addMonths, num, clean, confirmarEliminar } from './lib.js';
-import { bloqueTransferencias, calcLinea, SEL_PRESTAMOS, SEL_PAGOS, SEL_GASTOS } from './movs.js';
+import { detalle, fPago, fGasto, fPrest, calcLinea, SEL_PRESTAMOS, SEL_PAGOS, SEL_GASTOS } from './movs.js';
 import { S, sb, q, isAdmin, isStaff, nombreDe, cfgNum, esCob } from './state.js';
 
 const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -432,12 +432,19 @@ export async function caja(ctx) {
       cuerpo.push(h('p', { class: 'muted', style: { margin: '10px 0' } }, 'Aún no se ha abierto la caja de este cobrador.'),
         h('button', { class: 'btn primary block', on: { click: () => abrir(c, d) } }, 'Abrir caja'));
     }
-    // Igual para todos los cobradores: base, cobros, gastos, préstamos con su efectivo y efectivo esperado
-    cuerpo.push(h('div', { class: 'kv', style: { marginTop: '10px' } }, kvc('Base entregada', money(base)), kvc('Cobros en efectivo', money(cerrada ? cj.total_cobros_efectivo : ef)), kvc('Gastos en efectivo', money(cerrada ? cj.total_gastos : gs)),
-        ents.length ? kvc('Entregado al cobrador para préstamos', money(entM)) : null, ents.length ? kvc('Entregado a clientes', '− ' + money(entC)) : null),
-      ents.length ? h('div', { class: 'small', style: { margin: '6px 2px' } }, h('div', { class: 'muted' }, 'Préstamos entregados con su efectivo:'), ents.map((e) => h('div', { class: 'line' }, h('span', { class: 'grow' }, ((e.prestamos && e.prestamos.clientes && e.prestamos.clientes.nombre_completo) || 'Cliente') + (Number(e.monto) > 0 ? ' (con ' + money(e.monto) + ' adicionales del cobrador)' : '')), h('b', { class: 'amt' }, money(e.valor_cliente))))) : null,
-      h('div', { class: 'line', style: { marginTop: '6px' } }, h('b', { class: 'grow' }, 'Efectivo esperado'), h('b', { class: 'amt' }, money(esperado))),
-      bloqueTransferencias({ pagosTr, gastos, prests }));
+    // Igual para todos los cobradores. Las celdas por transferencia solo aparecen si hubo movimientos y se tocan para ver el detalle
+    const pTr = prests.filter((x) => x.medio_desembolso === 'TRANSFERENCIA');
+    const hayMov = cj || pagos.length || gastos.length || prests.length;
+    if (hayMov) {
+      cuerpo.push(h('div', { class: 'kv', style: { marginTop: '10px' } },
+        kvc('Base entregada', money(base)), kvc('Cobros en efectivo', money(cerrada ? cj.total_cobros_efectivo : ef)), kvc('Gastos en efectivo', money(cerrada ? cj.total_gastos : gs)),
+        pagosTr.length ? kvt('Recaudado por transferencia', money(tr), () => detalle('Recaudado por transferencia', tr, pagosTr.map(fPago), 'Entró directo a la cuenta; no suma al efectivo del cobrador.')) : null,
+        ents.length ? kvc('Entregado al cobrador para préstamos', money(entM)) : null, ents.length ? kvc('Entregado a clientes', '− ' + money(entC)) : null,
+        pTr.length ? kvt('Préstamos por transferencia', money(sum(pTr, 'valor_prestado')), () => detalle('Préstamos por transferencia', sum(pTr, 'valor_prestado'), pTr.map(fPrest), 'Pagados desde una cuenta; no afectan el efectivo del cobrador.')) : null,
+        gTr.length ? kvt('Gastos por transferencia', money(gt), () => detalle('Gastos por transferencia', gt, gTr.map(fGasto), 'Salieron de la cuenta; no afectan el efectivo del cobrador.')) : null),
+      ents.length ? h('div', { class: 'small', style: { margin: '6px 2px' } }, h('div', { class: 'muted' }, 'Préstamos entregados:'), ents.map((e) => h('div', { class: 'line' }, h('span', { class: 'grow' }, ((e.prestamos && e.prestamos.clientes && e.prestamos.clientes.nombre_completo) || 'Cliente') + (Number(e.monto) > 0 ? ' (con ' + money(e.monto) + ' adicionales del cobrador)' : '')), h('b', { class: 'amt' }, money(e.valor_cliente))))) : null,
+      h('div', { class: 'line', style: { marginTop: '6px' } }, h('b', { class: 'grow' }, 'Efectivo esperado'), h('b', { class: 'amt' }, money(esperado))));
+    }
     if (cj) {
       if (cerrada) {
         const df = Number(cj.diferencia);
@@ -453,6 +460,7 @@ export async function caja(ctx) {
     return h('div', { class: 'panel' }, h('div', { class: 'row between' }, h('b', { style: { fontSize: '18px' } }, c.nombre), h('span', { class: 'tag ' + (cerrada ? 'ok' : cj ? 'warn' : '') }, cerrada ? 'Cerrada' : cj ? 'Abierta' : 'Sin abrir')), cuerpo);
   }
   const kvc = (k, v) => h('div', {}, h('div', { class: 'k' }, k), h('div', { class: 'v' }, v));
+  const kvt = (k, v, fn) => h('div', {}, h('button', { type: 'button', class: 'kvbtn', on: { click: fn } }, h('div', { class: 'k' }, k + ' ›'), h('div', { class: 'v' }, v)));
 
   function editarCaja(c, cj) {
     const cerrada = cj.estado === 'CERRADA';

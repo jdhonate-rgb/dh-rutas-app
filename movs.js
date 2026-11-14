@@ -28,16 +28,6 @@ export const fPrest = (x) => ({ t: (x.clientes && x.clientes.nombre_completo) ||
   s: (tipoTxt[x.tipo_operacion] || x.tipo_operacion || '') + ' · papelería ' + money(x.valor_papeleria) + ' · entregado ' + money(x.valor_entregado) + (x.medio_desembolso === 'TRANSFERENCIA' ? ' · desde ' + nomCta(x.cuenta_id) : ''),
   v: x.valor_prestado, href: '#/prestamo/' + x.id });
 
-// Bloque "Por transferencia": tres conceptos tocables (no afectan el efectivo del cobrador)
-export function bloqueTransferencias({ pagosTr, gastos, prests }) {
-  const gTr = gastos.filter((g) => g.metodo === 'TRANSFERENCIA'), pTr = prests.filter((x) => x.medio_desembolso === 'TRANSFERENCIA');
-  return h('div', { style: { marginTop: '8px' } },
-    h('div', { class: 'small muted', style: { fontWeight: '700', margin: '4px 0 0' } }, 'POR TRANSFERENCIA · no cambian el efectivo (toca para ver el detalle)'),
-    concepto('Cobros por transferencia', pagosTr.map(fPago), sumv(pagosTr, 'valor'), 'Ingresaron a la cuenta indicada en cada cobro.'),
-    concepto('Gastos por transferencia', gTr.map(fGasto), sumv(gTr, 'valor'), 'Salieron de la cuenta indicada en cada gasto.', 'neg'),
-    concepto('Préstamos por transferencia', pTr.map(fPrest), sumv(pTr, 'valor_prestado'), 'Préstamos pagados desde una cuenta. Valor prestado.'));
-}
-
 export const SEL_PRESTAMOS = 'id,cobrador_id,valor_prestado,valor_papeleria,valor_entregado,medio_desembolso,tipo_operacion,cuenta_id,clientes(nombre_completo)';
 export const SEL_PAGOS = 'prestamo_id,cobrador_id,valor,metodo,caja_id,hora_pago,cuenta_destino_id,clientes(nombre_completo)';
 export const SEL_GASTOS = 'usuario_id,valor,metodo,categoria,descripcion,cuenta_id';
