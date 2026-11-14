@@ -253,6 +253,8 @@ function abrirCobro(ctx, pr, debeHoy, cuotas) {
     cuentasOk.length ? field('Cuenta donde entró el dinero', cuenta)
       : h('p', { class: 'hint', style: { marginBottom: '14px' } }, S.profile.cuenta_recaudo_id ? 'El dinero se acredita a tu cuenta de recaudo.' : 'No tienes cuenta de recaudo asignada. Pídele al administrador que la configure.'));
   const obs = h('textarea', { placeholder: 'Opcional', maxlength: '200' });
+  const puedeFecha = isStaff() || !!(S.profile && S.profile.puede_fecha_pago);
+  const fechaCobro = h('input', { type: 'date', value: hoyCO(), max: hoyCO() });
 
   sheet('Registrar cobro', (close) => h('div', {},
     h('p', { class: 'muted', style: { marginBottom: '12px' } }, pr.nombre_completo + ' · saldo ' + money(saldo)),
@@ -263,16 +265,19 @@ function abrirCobro(ctx, pr, debeHoy, cuotas) {
       h('button', { class: 'chip', type: 'button', on: { click: () => poner(saldo) } }, 'Saldo total ' + money(saldo))),
     h('div', { class: 'field' }, h('label', {}, 'Cómo pagó'), metodo),
     cuentaBox,
+    puedeFecha ? h('div', {}, field('Fecha del cobro', fechaCobro), h('p', { class: 'hint', style: { margin: '-8px 0 14px' } }, 'Déjala en hoy salvo que sea un cobro de un día anterior con caja abierta.')) : null,
     field('Nota', obs),
     h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
       const v = moneyVal(monto);
       if (v <= 0) throw new Error('Escribe el valor cobrado.');
       if (v > saldo) throw new Error('El valor no puede ser mayor al saldo (' + money(saldo) + ').');
       const m = metodo.get();
+      const fc = puedeFecha && fechaCobro.value && fechaCobro.value !== hoyCO() ? fechaCobro.value : null;
+      if (fc && fc > hoyCO()) throw new Error('La fecha del cobro no puede ser futura.');
       const u = await ubicacion();
-      await q(sb.rpc('registrar_pago', { p_prestamo: pr.id, p_valor: v, p_metodo: m, p_cuenta: m === 'TRANSFERENCIA' && cuentasOk.length ? cuenta.value : null, p_obs: obs.value.trim() || null, p_lat: u.lat ?? null, p_lng: u.lng ?? null }));
+      await q(sb.rpc('registrar_pago', { p_fecha: fc, p_prestamo: pr.id, p_valor: v, p_metodo: m, p_cuenta: m === 'TRANSFERENCIA' && cuentasOk.length ? cuenta.value : null, p_obs: obs.value.trim() || null, p_lat: u.lat ?? null, p_lng: u.lng ?? null }));
       close();
-      toast('Cobro de ' + money(v) + ' registrado' + (v >= saldo ? '. Préstamo pagado.' : ''));
+      toast('Cobro de ' + money(v) + ' registrado' + (fc ? ' con fecha ' + fdate(fc) : '') + (v >= saldo ? '. Préstamo pagado.' : ''));
       if (isStaff()) ctx.refresh(); else location.hash = '#/ruta';
     }) } }, 'Confirmar cobro')));
 }

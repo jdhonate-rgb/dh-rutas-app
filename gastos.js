@@ -84,6 +84,7 @@ async function resumenCobrador(ctx) {
   const efectivo = sum(pagos.filter((p) => p.metodo === 'EFECTIVO'), 'valor');
   const transf = sum(pagos.filter((p) => p.metodo === 'TRANSFERENCIA'), 'valor');
   const gast = sum(gastosHoy.filter((g) => g.metodo === 'EFECTIVO'), 'valor');
+  const gastTr = sum(gastosHoy.filter((g) => g.metodo === 'TRANSFERENCIA'), 'valor');
   const base = caja ? Number(caja.base_inicial) : 0;
   const entregar = efDisp != null ? efDisp : base + efectivo - gast;   // incluye préstamos hechos desde su caja
   const prest = (rd && rd.prestamos) || [];
@@ -104,6 +105,7 @@ async function resumenCobrador(ctx) {
       linea('Base recibida', money(base)), linea('Cobros en efectivo', '+ ' + money(efectivo)), linea('Cobros por transferencia (van a la cuenta)', money(transf))),
     h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Egresos'),
       linea('Gastos en efectivo', '− ' + money(gast)),
+      gastTr > 0 ? linea('Gastos por transferencia (salen de la cuenta)', '− ' + money(gastTr)) : null,
       prest.length ? h('div', {}, h('div', { class: 'small muted', style: { margin: '6px 0 2px' } }, 'Préstamos entregados hoy (' + prest.length + ')'),
         prest.map((p) => h('div', { class: 'line' }, h('div', { class: 'grow' }, h('b', {}, p.cliente), h('div', { class: 'small muted' }, 'Prestó ' + money(p.valor) + ' · papelería ' + money(p.papeleria) + ' · ' + (p.medio || ''))), h('div', { class: 'amt neg' }, '− ' + money(p.entregado))))) : linea('Préstamos entregados', money(0)),
       entregaCaja > 0 ? linea('Préstamos entregados desde tu caja', '− ' + money(entregaCaja)) : null),
