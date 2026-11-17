@@ -105,6 +105,99 @@ function gananciaDe(p) {
 // ------------------------------------------------------------ definición de reportes
 const C = (t, k, f, s) => ({ t, k, f, s });
 const REPORTES = [
+  { id: 'general', titulo: 'Resumen general', icono: 'chart', desc: 'Control de ingresos vs gastos del periodo: comparación con el periodo anterior, indicadores, gastos por categoría, por cobrador y evolución semanal.',
+    usa: ['desde', 'hasta', 'cobrador'], fechas: 'Cobros, préstamos y gastos por su fecha; liquidaciones por su fecha de pago', def: 'mes',
+    async run(f, cat) {
+      const bog = (ts) => (ts ? new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }) : '');
+      const suma = (iso, n) => { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().substring(0, 10); };
+      const dias = f.desde && f.hasta ? Math.round((new Date(f.hasta + 'T12:00:00Z') - new Date(f.desde + 'T12:00:00Z')) / 86400000) + 1 : 0;
+      const ant = dias ? { desde: suma(f.desde, -dias), hasta: suma(f.desde, -1) } : null;
+      const mio = (id) => !f.cobrador || id === f.cobrador;
+      const [ls, aj] = await Promise.all([todo(() => sb.from('liquidaciones').select('*').eq('estado', 'PAGADA')), todo(() => sb.from('liq_ajustes').select('liquidacion_id,tipo,valor'))]);
+      const cargar = async (r) => {
+        const [pg, pr, gs, cj] = await Promise.all([
+          todo(() => rango(sb.from('pagos').select('valor,metodo,cobrador_id,fecha_pago').eq('estado_pago', 'VIGENTE'), 'fecha_pago', r)),
+          todo(() => rango(sb.from('prestamos').select('valor_prestado,valor_papeleria,valor_entregado,medio_desembolso,cobrador_id,fecha_desembolso'), 'fecha_desembolso', r)),
+          todo(() => rango(sb.from('gastos').select('valor,metodo,categoria,usuario_id,fecha'), 'fecha', r)),
+          todo(() => rango(sb.from('cajas').select('cobrador_id,diferencia').eq('estado', 'CERRADA'), 'fecha', r))
+        ]);
+        return { pagos: pg.filter((x) => mio(x.cobrador_id)), prest: pr.filter((x) => mio(x.cobrador_id)), gastos: gs.filter((x) => mio(x.usuario_id)), cajas: cj.filter((x) => mio(x.cobrador_id)),
+          liqs: ls.filter((l) => mio(l.cobrador_id) && (!r.desde || bog(l.fecha_pago) >= r.desde) && (!r.hasta || bog(l.fecha_pago) <= r.hasta)) };
+      };
+      const [D, P] = await Promise.all([cargar(f), ant ? cargar(ant) : Promise.resolve(null)]);
+      const S_ = (arr, k) => arr.reduce((t, r) => t + Number(r[k] || 0), 0);
+      const calc = (d) => {
+        const cobEf = d.pagos.filter((p) => p.metodo === 'EFECTIVO'), cobTr = d.pagos.filter((p) => p.metodo === 'TRANSFERENCIA');
+        const prEf = d.prest.filter((p) => p.medio_desembolso !== 'TRANSFERENCIA'), prTr = d.prest.filter((p) => p.medio_desembolso === 'TRANSFERENCIA');
+        const gEf = d.gastos.filter((g) => g.metodo !== 'TRANSFERENCIA'), gTr = d.gastos.filter((g) => g.metodo === 'TRANSFERENCIA');
+        const m = { cobEf, cobTr, prEf, prTr, gEf, gTr, ing: S_(d.pagos, 'valor'), pliq: S_(d.liqs, 'neto_pagado'), gast: S_(d.gastos, 'valor'), prestado: S_(d.prest, 'valor_entregado') };
+        m.egr = m.prestado + m.gast + m.pliq; m.res = m.ing - m.egr;
+        return m;
+      };
+      const M = calc(D), A = P ? calc(P) : null;
+      const vr = (c, a) => (a == null ? '' : a === 0 ? (c === 0 ? 0 : '') : ((c - a) / Math.abs(a)) * 100);
+      const R = (concepto, n, valor, antes) => ({ concepto, n, valor, antes: A ? antes : '', var: A ? vr(valor, antes) : '' });
+      const H = (t) => ({ concepto: t, n: '', valor: '', antes: '', var: '' });
+      const rows = [
+        H('INGRESOS'),
+        R('Cobros efectivo', M.cobEf.length, S_(M.cobEf, 'valor'), A && S_(A.cobEf, 'valor')),
+        R('Cobros transferencia', M.cobTr.length, S_(M.cobTr, 'valor'), A && S_(A.cobTr, 'valor')),
+        R('TOTAL INGRESOS', D.pagos.length, M.ing, A && A.ing),
+        H('EGRESOS'),
+        R('Préstamos efectivo', M.prEf.length, S_(M.prEf, 'valor_entregado'), A && S_(A.prEf, 'valor_entregado')),
+        R('Préstamos transferencia', M.prTr.length, S_(M.prTr, 'valor_entregado'), A && S_(A.prTr, 'valor_entregado')),
+        R('Gastos efectivo', M.gEf.length, S_(M.gEf, 'valor'), A && S_(A.gEf, 'valor')),
+        R('Gastos transferencia', M.gTr.length, S_(M.gTr, 'valor'), A && S_(A.gTr, 'valor')),
+        R('Pago a cobradores', D.liqs.length, M.pliq, A && A.pliq),
+        R('TOTAL EGRESOS', D.prest.length + D.gastos.length + D.liqs.length, M.egr, A && A.egr),
+        H('RESULTADO'),
+        R('INGRESOS − EGRESOS', '', M.res, A && A.res),
+        H('INFORMATIVO'),
+        R('Valor prestado (bruto)', D.prest.length, S_(D.prest, 'valor_prestado'), A && S_(P.prest, 'valor_prestado')),
+        R('Papelería retenida', D.prest.length, S_(D.prest, 'valor_papeleria'), A && S_(P.prest, 'valor_papeleria')),
+        R('Diferencias de caja', D.cajas.length, S_(D.cajas, 'diferencia'), A && S_(P.cajas, 'diferencia'))
+      ];
+      // ---- indicadores de control
+      const pct = (x, y) => (y > 0 ? ((x / y) * 100).toFixed(1) + ' %' : '—');
+      const porCat = new Map(); D.gastos.forEach((g) => porCat.set(g.categoria, (porCat.get(g.categoria) || 0) + Number(g.valor)));
+      const mayor = [...porCat.entries()].sort((a, b) => b[1] - a[1])[0];
+      const ind = [
+        { ind: 'Egresos totales sobre ingresos', val: pct(M.egr, M.ing), ant: A ? pct(A.egr, A.ing) : '' },
+        { ind: 'Gastos operativos sobre ingresos', val: pct(M.gast, M.ing), ant: A ? pct(A.gast, A.ing) : '' },
+        { ind: 'Pago a cobradores sobre ingresos', val: pct(M.pliq, M.ing), ant: A ? pct(A.pliq, A.ing) : '' },
+        { ind: 'Préstamos entregados sobre ingresos', val: pct(M.prestado, M.ing), ant: A ? pct(A.prestado, A.ing) : '' },
+        { ind: 'Margen del periodo (resultado / ingresos)', val: M.ing > 0 ? ((M.res / M.ing) * 100).toFixed(1) + ' %' : '—', ant: A && A.ing > 0 ? ((A.res / A.ing) * 100).toFixed(1) + ' %' : '' },
+        { ind: 'Gasto operativo promedio por día', val: dias ? money(Math.round(M.gast / dias)) : '—', ant: A && dias ? money(Math.round(A.gast / dias)) : '' },
+        { ind: 'Categoría con más gasto', val: mayor ? mayor[0] + ' (' + pct(mayor[1], M.gast) + ')' : '—', ant: '' }
+      ];
+      // ---- gastos por categoría (con % y comparación)
+      const catAnt = new Map(); if (P) P.gastos.forEach((g) => catAnt.set(g.categoria, (catAnt.get(g.categoria) || 0) + Number(g.valor)));
+      const catRows = [...new Set([...porCat.keys(), ...catAnt.keys()])].map((k) => ({ cat: k, n: D.gastos.filter((g) => g.categoria === k).length, val: porCat.get(k) || 0, pct: M.gast > 0 ? ((porCat.get(k) || 0) / M.gast) * 100 : 0, ant: P ? (catAnt.get(k) || 0) : '', var: P ? vr(porCat.get(k) || 0, catAnt.get(k) || 0) : '' }))
+        .sort((a, b) => b.val - a.val);
+      // ---- por cobrador
+      const ids = [...new Set([...D.pagos.map((x) => x.cobrador_id), ...D.prest.map((x) => x.cobrador_id), ...D.gastos.map((x) => x.usuario_id), ...D.liqs.map((x) => x.cobrador_id)])].filter(Boolean);
+      const cobRows = ids.map((id) => { const c = S_(D.pagos.filter((x) => x.cobrador_id === id), 'valor'), p = S_(D.prest.filter((x) => x.cobrador_id === id), 'valor_entregado'), g = S_(D.gastos.filter((x) => x.usuario_id === id), 'valor'), l = S_(D.liqs.filter((x) => x.cobrador_id === id), 'neto_pagado');
+        return { cobrador: cat.perfil[id] || '', cobrado: c, prestado: p, gastos: g, liq: l, res: c - p - g - l }; }).sort((a, b) => b.cobrado - a.cobrado);
+      // ---- evolución por semana (lunes a domingo)
+      const lunes = (iso) => { const d = new Date(iso + 'T12:00:00Z'); const w = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - w); return d.toISOString().substring(0, 10); };
+      const sem = new Map(); const ponerS = (iso, k, v) => { if (!iso) return; const w = lunes(String(iso).substring(0, 10)); if (!sem.has(w)) sem.set(w, { semana: w, ing: 0, egr: 0 }); sem.get(w)[k] += Number(v || 0); };
+      D.pagos.forEach((x) => ponerS(x.fecha_pago, 'ing', x.valor)); D.prest.forEach((x) => ponerS(x.fecha_desembolso, 'egr', x.valor_entregado)); D.gastos.forEach((x) => ponerS(x.fecha, 'egr', x.valor));
+      D.liqs.forEach((x) => ponerS(bog(x.fecha_pago), 'egr', x.neto_pagado));
+      const semRows = [...sem.values()].sort((a, b) => (a.semana < b.semana ? -1 : 1)).map((x) => ({ semana: x.semana, ing: x.ing, egr: x.egr, res: x.ing - x.egr }));
+      // ---- pago a cobradores: lo realmente pagado
+      const liqRows = D.liqs.map((l) => ({ cobrador: cat.perfil[l.cobrador_id] || '', base: +l.pago_base, neto: +l.neto_pagado, pagada: bog(l.fecha_pago) }));
+      const cols5 = A ? [C('Concepto', 'concepto'), C('Reg.', 'n', 'n'), C('Valor', 'valor', 'm'), C('Anterior', 'antes', 'm'), C('Var.', 'var', 'p')] : [C('Concepto', 'concepto'), C('Reg.', 'n', 'n'), C('Valor', 'valor', 'm')];
+      return { cols: cols5, rows,
+        nota: 'Préstamos: lo que recibió el cliente (sin papelería). Pago a cobradores: lo realmente pagado en cada liquidación (base + comisión − faltantes ± ajustes), no el pago base pactado. '
+          + (A ? 'Anterior = ' + dmy(ant.desde) + ' al ' + dmy(ant.hasta) + ' (mismo número de días). ' : 'Elige Desde y Hasta para comparar con el periodo anterior. ') + 'Diferencias de caja: negativo = faltante.',
+        extras: [
+          { titulo: 'Indicadores de control', cols: [C('Indicador', 'ind'), C('Este periodo', 'val')].concat(A ? [C('Anterior', 'ant')] : []), rows: ind },
+          { titulo: 'Gastos por categoría', cols: [C('Categoría', 'cat'), C('Reg.', 'n', 'n'), C('Valor', 'val', 'm'), C('% gastos', 'pct', 'p')].concat(A ? [C('Anterior', 'ant', 'm'), C('Var.', 'var', 'p')] : []), rows: catRows, total: 'val' },
+          { titulo: 'Por cobrador', cols: [C('Cobrador', 'cobrador'), C('Cobrado', 'cobrado', 'm'), C('Prestado', 'prestado', 'm'), C('Gastos', 'gastos', 'm'), C('Liquidación', 'liq', 'm'), C('Resultado', 'res', 'm')], rows: cobRows },
+          { titulo: 'Evolución por semana (inicia el lunes)', cols: [C('Semana', 'semana', 'd'), C('Ingresos', 'ing', 'm'), C('Egresos', 'egr', 'm'), C('Resultado', 'res', 'm')], rows: semRows },
+          { titulo: 'Pago a cobradores: lo realmente pagado', cols: [C('Cobrador', 'cobrador'), C('Base pactado', 'base', 'm'), C('Neto pagado', 'neto', 'm'), C('Pagada', 'pagada', 'd')], rows: liqRows, total: 'neto' }
+        ] };
+    } },
   { id: 'ganancias', titulo: 'Ganancias (intereses)', icono: 'percent', desc: 'Cuánto genera en ganancias (intereses) cada préstamo, cuánto de esa ganancia ya cobró y cuánto tiene todavía en la calle.',
     usa: ['desde', 'hasta', 'cobrador', 'ruta', 'modalidad', 'estado', 'tipo'], fechas: 'Fecha de desembolso del préstamo', def: '',
     async run(f, cat) {
