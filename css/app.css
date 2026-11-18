@@ -343,3 +343,5 @@ main#view:has(.rep-pagina) { max-width: 1500px; }
   .rep-tabla tfoot td, .rep-tabla tbody tr:nth-child(even) td, .rep-nota { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .rep-extra { page-break-inside: avoid; }
 }
+.rep-sec { font-size: 14px; color: #1F3A5F; margin: 22px 0 6px; }
+.rep-tabla td.w, .rep-tabla th.w { white-space: normal; min-width: 150px; }

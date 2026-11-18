@@ -12,7 +12,13 @@ const TIPOS = { NUEVO: 'Nuevo', MIGRACION: 'Migración', RENOVACION: 'Renovació
 const MOV = { DESEMBOLSO: 'Desembolso de préstamo', COBRO_TRANSFERENCIA: 'Cobro por transferencia', COBRO_EFECTIVO: 'Cobro en efectivo', GASTO: 'Gasto',
   BASE_COBRADOR: 'Base entregada al cobrador', CIERRE_CAJA: 'Cierre de caja', ENTREGA_COBRADOR: 'Entrega al cobrador para préstamo', CIERRE_ENTREGAS: 'Cierre de entregas',
   RETIRO: 'Retiro', TRANSFERENCIA_SALIDA: 'Transferencia (sale)', TRANSFERENCIA_ENTRADA: 'Transferencia (entra)', PAGO_LIQUIDACION: 'Pago de liquidación',
-  INGRESO_OFICINA: 'Ingreso de oficina', SALDO_INICIAL: 'Saldo inicial' };
+  INGRESO_OFICINA: 'Ingreso de oficina', SALDO_INICIAL: 'Saldo inicial', CIERRE_BASE: 'Cierre de caja: devolución de base', CIERRE_COBROS: 'Cierre de caja: cobros en efectivo',
+  CIERRE_ENTREGAS: 'Cierre de caja: entregas para préstamos', DIFERENCIA_CAJA: 'Diferencia de caja', RETIRO_PAPELERIA: 'Retiro de papelería', PAGO_BASE_SEMANAL: 'Pago base semanal', INGRESO: 'Ingreso' };
+// Clasificación contable de los movimientos de cuentas
+const CLASE = { COBRO_TRANSFERENCIA: 'Operación', COBRO_EFECTIVO: 'Operación', INGRESO_OFICINA: 'Operación', INGRESO: 'Operación', DESEMBOLSO: 'Operación', GASTO: 'Operación', PAGO_LIQUIDACION: 'Operación',
+  PAGO_BASE_SEMANAL: 'Operación', RETIRO: 'Operación', RETIRO_PAPELERIA: 'Operación', DIFERENCIA_CAJA: 'Operación', SALDO_INICIAL: 'Operación',
+  BASE_COBRADOR: 'Interno de caja', CIERRE_BASE: 'Interno de caja', CIERRE_COBROS: 'Interno de caja', CIERRE_ENTREGAS: 'Interno de caja', ENTREGA_COBRADOR: 'Interno de caja', CIERRE_CAJA: 'Interno de caja',
+  TRANSFERENCIA_ENTRADA: 'Entre cuentas', TRANSFERENCIA_SALIDA: 'Entre cuentas' };
 
 /** Trae todas las filas (de 1000 en 1000). `mk` crea la consulta de cero cada vez. */
 async function todo(mk) {
@@ -104,8 +110,9 @@ function gananciaDe(p) {
 
 // ------------------------------------------------------------ definición de reportes
 const C = (t, k, f, s) => ({ t, k, f, s });
+const W = (t, k) => ({ t, k, w: 1 });   // columna de texto que puede pasar a varias líneas
 const REPORTES = [
-  { id: 'general', titulo: 'Resumen general', icono: 'chart', desc: 'Control de ingresos vs gastos del periodo: comparación con el periodo anterior, indicadores, gastos por categoría, por cobrador y evolución semanal.',
+  { id: 'gerencial', titulo: 'Informe gerencial', icono: 'chart', desc: 'Informe completo para el dueño o el contador: ingresos y egresos, cuentas (saldo inicial, entradas, salidas y saldo final), cartera, cobradores, gastos, indicadores y alertas.',
     usa: ['desde', 'hasta', 'cobrador'], fechas: 'Cobros, préstamos y gastos por su fecha; liquidaciones por su fecha de pago', def: 'mes',
     async run(f, cat) {
       const bog = (ts) => (ts ? new Date(ts).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }) : '');
@@ -117,9 +124,9 @@ const REPORTES = [
       const cargar = async (r) => {
         const [pg, pr, gs, cj] = await Promise.all([
           todo(() => rango(sb.from('pagos').select('valor,metodo,cobrador_id,fecha_pago').eq('estado_pago', 'VIGENTE'), 'fecha_pago', r)),
-          todo(() => rango(sb.from('prestamos').select('valor_prestado,valor_papeleria,valor_entregado,medio_desembolso,cobrador_id,fecha_desembolso'), 'fecha_desembolso', r)),
-          todo(() => rango(sb.from('gastos').select('valor,metodo,categoria,usuario_id,fecha'), 'fecha', r)),
-          todo(() => rango(sb.from('cajas').select('cobrador_id,diferencia').eq('estado', 'CERRADA'), 'fecha', r))
+          todo(() => rango(sb.from('prestamos').select('valor_prestado,valor_papeleria,valor_entregado,medio_desembolso,cobrador_id,fecha_desembolso,cliente_id,tipo_operacion,modalidad'), 'fecha_desembolso', r)),
+          todo(() => rango(sb.from('gastos').select('valor,metodo,categoria,usuario_id,fecha,descripcion,cuenta_id'), 'fecha', r)),
+          todo(() => rango(sb.from('cajas').select('cobrador_id,diferencia,fecha,estado'), 'fecha', r))
         ]);
         return { pagos: pg.filter((x) => mio(x.cobrador_id)), prest: pr.filter((x) => mio(x.cobrador_id)), gastos: gs.filter((x) => mio(x.usuario_id)), cajas: cj.filter((x) => mio(x.cobrador_id)),
           liqs: ls.filter((l) => mio(l.cobrador_id) && (!r.desde || bog(l.fecha_pago) >= r.desde) && (!r.hasta || bog(l.fecha_pago) <= r.hasta)) };
@@ -186,16 +193,116 @@ const REPORTES = [
       const semRows = [...sem.values()].sort((a, b) => (a.semana < b.semana ? -1 : 1)).map((x) => ({ semana: x.semana, ing: x.ing, egr: x.egr, res: x.ing - x.egr }));
       // ---- pago a cobradores: lo realmente pagado
       const liqRows = D.liqs.map((l) => ({ cobrador: cat.perfil[l.cobrador_id] || '', base: +l.pago_base, neto: +l.neto_pagado, pagada: bog(l.fecha_pago) }));
+      // ===================== SECCIONES DEL INFORME GERENCIAL =====================
+      const hoy_ = hoyCO(), hastaEf = f.hasta || hoy_;
+      const [ctas, movs, papel, cartera, cajasAb] = await Promise.all([
+        todo(() => sb.from('cuentas').select('id,nombre,tipo,saldo_inicial,activa')),
+        todo(() => { let b = sb.from('movimientos_cuenta').select('id,cuenta_id,fecha,tipo,monto,descripcion,created_at').order('fecha').order('id'); return b.lte('fecha', hastaEf); }),
+        sb.from('v_papeleria_por_cuenta').select('*').then((r) => r.data || []).catch(() => []),
+        prestamosBase({ cobrador: f.cobrador }, cat, false),
+        todo(() => sb.from('cajas').select('cobrador_id,fecha,estado').eq('estado', 'ABIERTA'))
+      ]);
+      const cuentasOp = ctas.filter((c) => c.tipo !== 'PAPELERIA');
+      const nomC = (id) => (ctas.find((c) => c.id === id) || {}).nombre || '';
+      const esPap = new Set(ctas.filter((c) => c.tipo === 'PAPELERIA').map((c) => c.id));
+      const movsOp = movs.filter((m) => !esPap.has(m.cuenta_id));
+      const enPer = (m) => (!f.desde || m.fecha >= f.desde);
+      // --- Cuentas
+      const ctaRows = cuentasOp.map((c) => {
+        const mv = movsOp.filter((m) => m.cuenta_id === c.id);
+        const previos = mv.filter((m) => f.desde && m.fecha < f.desde), per = mv.filter(enPer);
+        const si = Number(c.saldo_inicial) + S_(previos, 'monto');
+        const ent = S_(per.filter((m) => m.monto > 0 && !m.tipo.startsWith('TRANSFERENCIA')), 'monto');
+        const sal = -S_(per.filter((m) => m.monto < 0 && !m.tipo.startsWith('TRANSFERENCIA')), 'monto');
+        const tin = S_(per.filter((m) => m.tipo === 'TRANSFERENCIA_ENTRADA'), 'monto'), tout = -S_(per.filter((m) => m.tipo === 'TRANSFERENCIA_SALIDA'), 'monto');
+        return { cuenta: c.nombre, ini: si, ent, tin, sal, tout, fin: si + ent + tin - sal - tout };
+      });
+      const totC = (k) => S_(ctaRows, k);
+      const saldoFinal = totC('fin');
+      // --- Movimientos por tipo (clasificados)
+      const porTipo = new Map();
+      movsOp.filter(enPer).forEach((m) => { const a = porTipo.get(m.tipo) || { tipo: MOV[m.tipo] || m.tipo, clase: CLASE[m.tipo] || 'Otro', n: 0, ent: 0, sal: 0 }; a.n++; if (m.monto > 0) a.ent += +m.monto; else a.sal -= +m.monto; porTipo.set(m.tipo, a); });
+      const ordenC = { 'Operación': 0, 'Interno de caja': 1, 'Entre cuentas': 2, Otro: 3 };
+      const tipoRows = [...porTipo.values()].map((a) => ({ ...a, neto: a.ent - a.sal })).sort((a, b) => ordenC[a.clase] - ordenC[b.clase] || b.ent + b.sal - (a.ent + a.sal));
+      // --- Cuadre del libro: el saldo calculado debe coincidir con el saldo actual cuando el informe llega a hoy
+      const alertas = [];
+      const sumaMovTodos = (id) => Number(((ctas.find((c) => c.id === id) || {}).saldo_inicial) || 0) + S_(movsOp.filter((m) => m.cuenta_id === id), 'monto');
+      ctaRows.forEach((r, i) => { const d = Math.abs(r.fin - sumaMovTodos(cuentasOp[i].id)); if (d > 0.5) alertas.push({ nivel: 'REVISAR', alerta: 'Cuenta que no cuadra', detalle: `${r.cuenta}: diferencia de ${money(d)} entre el saldo del informe y el libro.` }); });
+      // --- Cartera (foto de hoy)
+      const act = cartera.filter((x) => x.estado_k === 'ACTIVO');
+      const carteraTot = S_(act, 'saldo'), vencidaTot = S_(act, 'valor_vencido'), enMora = act.filter((x) => x.vencidas > 0).length;
+      const tramo = (d) => (d <= 0 ? '0. Al día' : d <= 7 ? '1. De 1 a 7 días de atraso' : d <= 30 ? '2. De 8 a 30 días' : d <= 60 ? '3. De 31 a 60 días' : '4. Más de 60 días');
+      const aging = new Map(); act.forEach((x) => { const k = tramo(x.dias_atraso); const a = aging.get(k) || { tramo: k.substring(3), n: 0, saldo: 0, vencido: 0 }; a.n++; a.saldo += x.saldo; a.vencido += x.valor_vencido; aging.set(k, a); });
+      const agingRows = [...aging.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([, v]) => ({ ...v, pct: carteraTot > 0 ? (v.saldo / carteraTot) * 100 : 0 }));
+      const carCob = new Map(); act.forEach((x) => { const a = carCob.get(x.cobrador) || { cobrador: x.cobrador || '(sin cobrador)', n: 0, mora: 0, saldo: 0, vencido: 0 }; a.n++; if (x.vencidas > 0) a.mora++; a.saldo += x.saldo; a.vencido += x.valor_vencido; carCob.set(x.cobrador, a); });
+      const carRows = [...carCob.values()].sort((a, b) => b.saldo - a.saldo).map((a) => ({ ...a, pct: a.saldo > 0 ? (a.vencido / a.saldo) * 100 : 0 }));
+      // --- Cajas
+      const cajaDif = D.cajas.filter((c) => c.estado === 'CERRADA');
+      const viejas = cajasAb.filter((c) => mio(c.cobrador_id) && c.fecha < hoy_);
+      if (viejas.length) alertas.push({ nivel: 'ATENCIÓN', alerta: 'Cajas sin cerrar', detalle: `${viejas.length} caja${viejas.length === 1 ? '' : 's'} de días anteriores siguen abiertas (la más antigua: ${dmy(viejas.map((c) => c.fecha).sort()[0])}). Ciérralas para que los saldos de las cuentas queden completos.` });
+      const faltantes = -S_(cajaDif.filter((c) => c.diferencia < 0), 'diferencia'), sobrantes = S_(cajaDif.filter((c) => c.diferencia > 0), 'diferencia');
+      if (faltantes > 0) alertas.push({ nivel: 'ATENCIÓN', alerta: 'Faltantes de caja', detalle: `Suman ${money(faltantes)}.` });
+      if (carteraTot > 0 && vencidaTot / carteraTot > 0.15) alertas.push({ nivel: 'ATENCIÓN', alerta: 'Mora alta', detalle: `La cartera vencida es el ${((vencidaTot / carteraTot) * 100).toFixed(1)} % de la cartera activa.` });
+      if (A && A.gast > 0 && M.gast > A.gast * 1.3) alertas.push({ nivel: 'ATENCIÓN', alerta: 'Gastos en aumento', detalle: `Los gastos subieron ${(((M.gast - A.gast) / A.gast) * 100).toFixed(0)} % frente al periodo anterior.` });
+      if (M.res < 0) alertas.push({ nivel: 'ATENCIÓN', alerta: 'Resultado negativo', detalle: `Los egresos superaron a los ingresos por ${money(-M.res)} (incluye dinero prestado que vuelve en cuotas).` });
+      const negs = ctaRows.filter((r) => r.fin < 0); if (negs.length) alertas.push({ nivel: 'REVISAR', alerta: 'Cuentas con saldo negativo', detalle: negs.map((r) => `${r.cuenta} (${money(r.fin)})`).join(', ') + '. Suele ser por cajas sin cerrar o ingresos sin registrar.' });
+      if (!alertas.length) alertas.push({ nivel: 'OK', alerta: 'Sin alertas', detalle: 'No se encontraron situaciones para revisar con los datos del periodo.' });
+      // --- Papelería (acumulado actual)
+      const pap = papel.filter((x) => !f.cobrador);
+      const papRow = pap.length ? [{ c: 'Papelería generada (acumulada)', v: S_(pap, 'papeleria_total') }, { c: 'Parte de la empresa', v: S_(pap, 'parte_empresa') }, { c: 'Parte de los cobradores (comisión)', v: S_(pap, 'parte_cobrador') },
+        { c: 'Ya retirada', v: S_(pap, 'retirado') }, { c: 'Disponible', v: S_(pap, 'disponible') }] : [];
+      // --- Resumen ejecutivo
+      const pctS = (x, y) => (y > 0 ? ((x / y) * 100).toFixed(1) + ' %' : '—');
+      const ejec = [
+        { ind: 'Saldo total en cuentas (cierre)', val: money(saldoFinal), ant: A ? '' : '' },
+        { ind: 'Ingresos (cobros)', val: money(M.ing), ant: A ? money(A.ing) : '' },
+        { ind: 'Egresos (préstamos + gastos + cobradores)', val: money(M.egr), ant: A ? money(A.egr) : '' },
+        { ind: 'Resultado (ingresos − egresos)', val: money(M.res), ant: A ? money(A.res) : '' },
+        { ind: 'Dinero prestado a clientes', val: money(M.prestado), ant: A ? money(A.prestado) : '' },
+        { ind: 'Gastos operativos', val: money(M.gast), ant: A ? money(A.gast) : '' },
+        { ind: 'Pago a cobradores (liquidaciones)', val: money(M.pliq), ant: A ? money(A.pliq) : '' },
+        { ind: 'Cartera en la calle (hoy)', val: money(carteraTot), ant: '' },
+        { ind: 'Cartera vencida (hoy)', val: money(vencidaTot) + ' · ' + pctS(vencidaTot, carteraTot), ant: '' },
+        { ind: 'Préstamos activos / en mora', val: act.length + ' / ' + enMora, ant: '' }];
+      const H2 = (t) => t;
+      // --- Hojas de detalle para Excel
+      const movDet = movsOp.filter(enPer).map((m) => ({ fecha: m.fecha, cuenta: nomC(m.cuenta_id), tipo: MOV[m.tipo] || m.tipo, clase: CLASE[m.tipo] || 'Otro', entra: m.monto > 0 ? +m.monto : '', sale: m.monto < 0 ? -m.monto : '', desc: m.descripcion || '' }));
+      const gasDet = D.gastos.map((g) => ({ fecha: g.fecha, cat: g.categoria, desc: g.descripcion || '', metodo: cap(g.metodo), cuenta: nomC(g.cuenta_id), quien: cat.perfil[g.usuario_id] || '', valor: +g.valor })).sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+      const prDet = D.prest.map((p) => ({ fecha: p.fecha_desembolso, cliente: (cat.cliente[p.cliente_id] || {}).nombre_completo || '', cobrador: cat.perfil[p.cobrador_id] || '', tipo: TIPOS[p.tipo_operacion] || p.tipo_operacion, medio: cap(p.medio_desembolso || 'EFECTIVO'), prestado: +p.valor_prestado, papeleria: +p.valor_papeleria, entregado: +p.valor_entregado })).sort((a, b) => (a.fecha < b.fecha ? -1 : 1));
+      const liqDet = D.liqs.map((l) => ({ cobrador: cat.perfil[l.cobrador_id] || '', desde: l.fecha_inicio, hasta: l.fecha_fin, base: +l.pago_base, comision: +l.comision_papeleria, faltantes: +l.total_faltantes, neto: +l.neto_pagado, pagada: bog(l.fecha_pago) }));
       const cols5 = A ? [C('Concepto', 'concepto'), C('Reg.', 'n', 'n'), C('Valor', 'valor', 'm'), C('Anterior', 'antes', 'm'), C('Var.', 'var', 'p')] : [C('Concepto', 'concepto'), C('Reg.', 'n', 'n'), C('Valor', 'valor', 'm')];
-      return { cols: cols5, rows,
-        nota: 'Préstamos: lo que recibió el cliente (sin papelería). Pago a cobradores: lo realmente pagado en cada liquidación (base + comisión − faltantes ± ajustes), no el pago base pactado. '
-          + (A ? 'Anterior = ' + dmy(ant.desde) + ' al ' + dmy(ant.hasta) + ' (mismo número de días). ' : 'Elige Desde y Hasta para comparar con el periodo anterior. ') + 'Diferencias de caja: negativo = faltante.',
+      const criterios = [
+        'Ingresos = cobros de cuotas recibidos en el periodo (efectivo y transferencia), por su fecha de pago.',
+        'Egresos = dinero entregado a clientes en préstamos (sin la papelería retenida) + gastos registrados + pago a cobradores. El dinero prestado no es un gasto: vuelve a la empresa en cuotas.',
+        'Pago a cobradores = lo realmente pagado en cada liquidación (base + comisión − faltantes ± ajustes), por su fecha de pago; no el pago base pactado.',
+        'Cuentas: el saldo inicial es el saldo a la fecha "Desde". Los movimientos internos de caja (base al cobrador, cierres) y las transferencias entre cuentas mueven dinero de un lugar a otro y no son ingresos ni gastos; por eso se muestran aparte.',
+        'En las cuentas, el efectivo cobrado por los cobradores entra a la cuenta de oficina cuando se cierra su caja.',
+        'La cartera (activa, vencida, atraso) es una foto de hoy, no del periodo. La papelería es el acumulado actual.',
+        'Diferencias de caja: negativo = faltante, positivo = sobrante.'].map((t) => ({ t }));
+      const sec = (n, t) => n + '. ' + t;
+      return { cols: cols5, rows, tituloPrincipal: sec(3, 'Ingresos y egresos del periodo'),
+        nota: (A ? 'Anterior = ' + dmy(ant.desde) + ' al ' + dmy(ant.hasta) + ' (mismo número de días). ' : 'Elige Desde y Hasta para comparar con el periodo anterior. ') + 'Los criterios usados están al final del informe.',
+        hojas: [
+          { nombre: 'Movimientos de cuentas', cols: [C('Fecha', 'fecha', 'd'), C('Cuenta', 'cuenta'), C('Tipo', 'tipo'), C('Clasificación', 'clase'), C('Entra', 'entra', 'm'), C('Sale', 'sale', 'm'), C('Descripción', 'desc')], rows: movDet },
+          { nombre: 'Gastos', cols: [C('Fecha', 'fecha', 'd'), C('Categoría', 'cat'), C('Descripción', 'desc'), C('Método', 'metodo'), C('Cuenta', 'cuenta'), C('Registró', 'quien'), C('Valor', 'valor', 'm')], rows: gasDet },
+          { nombre: 'Préstamos', cols: [C('Fecha', 'fecha', 'd'), C('Cliente', 'cliente'), C('Cobrador', 'cobrador'), C('Tipo', 'tipo'), C('Medio', 'medio'), C('Prestado', 'prestado', 'm'), C('Papelería', 'papeleria', 'm'), C('Entregado', 'entregado', 'm')], rows: prDet },
+          { nombre: 'Liquidaciones', cols: [C('Cobrador', 'cobrador'), C('Desde', 'desde', 'd'), C('Hasta', 'hasta', 'd'), C('Base', 'base', 'm'), C('Comisión', 'comision', 'm'), C('Faltantes', 'faltantes', 'm'), C('Neto pagado', 'neto', 'm'), C('Pagada', 'pagada', 'd')], rows: liqDet }
+        ],
         extras: [
-          { titulo: 'Indicadores de control', cols: [C('Indicador', 'ind'), C('Este periodo', 'val')].concat(A ? [C('Anterior', 'ant')] : []), rows: ind },
-          { titulo: 'Gastos por categoría', cols: [C('Categoría', 'cat'), C('Reg.', 'n', 'n'), C('Valor', 'val', 'm'), C('% gastos', 'pct', 'p')].concat(A ? [C('Anterior', 'ant', 'm'), C('Var.', 'var', 'p')] : []), rows: catRows, total: 'val' },
-          { titulo: 'Por cobrador', cols: [C('Cobrador', 'cobrador'), C('Cobrado', 'cobrado', 'm'), C('Prestado', 'prestado', 'm'), C('Gastos', 'gastos', 'm'), C('Liquidación', 'liq', 'm'), C('Resultado', 'res', 'm')], rows: cobRows },
-          { titulo: 'Evolución por semana (inicia el lunes)', cols: [C('Semana', 'semana', 'd'), C('Ingresos', 'ing', 'm'), C('Egresos', 'egr', 'm'), C('Resultado', 'res', 'm')], rows: semRows },
-          { titulo: 'Pago a cobradores: lo realmente pagado', cols: [C('Cobrador', 'cobrador'), C('Base pactado', 'base', 'm'), C('Neto pagado', 'neto', 'm'), C('Pagada', 'pagada', 'd')], rows: liqRows, total: 'neto' }
+          { primero: true, titulo: sec(1, 'Resumen ejecutivo'), cols: [W('Indicador', 'ind'), C('Este periodo', 'val')].concat(A ? [C('Anterior', 'ant')] : []), rows: ejec },
+          { primero: true, titulo: sec(2, 'Alertas y puntos para revisar'), cols: [C('Nivel', 'nivel'), W('Qué revisar', 'texto')], rows: alertas.map((a) => ({ nivel: a.nivel, texto: a.alerta + ': ' + a.detalle })) },
+          { titulo: sec(4, 'Entradas y salidas de las cuentas, por tipo de movimiento'), cols: [C('Movimiento', 'tipo'), C('Clasificación', 'clase'), C('Reg.', 'n', 'n'), C('Entradas', 'ent', 'm'), C('Salidas', 'sal', 'm'), C('Neto', 'neto', 'm')], rows: tipoRows },
+          { titulo: sec(5, 'Cuentas: saldo inicial, entradas, salidas y saldo final'), cols: [C('Cuenta', 'cuenta'), C('Saldo inicial', 'ini', 'm', 1), C('Entradas', 'ent', 'm', 1), C('Transf. recibidas', 'tin', 'm', 1), C('Salidas', 'sal', 'm', 1), C('Transf. enviadas', 'tout', 'm', 1), C('Saldo final', 'fin', 'm', 1)], rows: ctaRows, totales: true },
+          { titulo: sec(6, 'Cartera por antigüedad de atraso (hoy)'), cols: [C('Tramo', 'tramo'), C('Préstamos', 'n', 'n'), C('Saldo', 'saldo', 'm'), C('Vencido', 'vencido', 'm'), C('% cartera', 'pct', 'p')], rows: agingRows },
+          { titulo: sec(7, 'Cartera por cobrador (hoy)'), cols: [C('Cobrador', 'cobrador'), C('Activos', 'n', 'n'), C('En mora', 'mora', 'n'), C('Saldo', 'saldo', 'm'), C('Vencido', 'vencido', 'm'), C('% vencido', 'pct', 'p')], rows: carRows },
+          { titulo: sec(8, 'Resultado por cobrador en el periodo'), cols: [C('Cobrador', 'cobrador'), C('Cobrado', 'cobrado', 'm'), C('Prestado', 'prestado', 'm'), C('Gastos', 'gastos', 'm'), C('Liquidación', 'liq', 'm'), C('Resultado', 'res', 'm')], rows: cobRows },
+          { titulo: sec(9, 'Pago a cobradores: lo realmente pagado'), cols: [C('Cobrador', 'cobrador'), C('Base pactado', 'base', 'm'), C('Neto pagado', 'neto', 'm'), C('Pagada', 'pagada', 'd')], rows: liqRows, total: 'neto' },
+          { titulo: sec(10, 'Gastos por categoría'), cols: [C('Categoría', 'cat'), C('Reg.', 'n', 'n'), C('Valor', 'val', 'm'), C('% gastos', 'pct', 'p')].concat(A ? [C('Anterior', 'ant', 'm'), C('Var.', 'var', 'p')] : []), rows: catRows, total: 'val' },
+          { titulo: sec(11, 'Cajas: faltantes y sobrantes'), cols: [C('Concepto', 'c'), C('Valor', 'v', 'm')], rows: [{ c: 'Cajas cerradas en el periodo', v: '' , n: cajaDif.length }, { c: 'Faltantes', v: faltantes }, { c: 'Sobrantes', v: sobrantes }].map((r) => (r.n != null ? { c: r.c + ': ' + r.n, v: '' } : r)) },
+          { titulo: sec(12, 'Papelería'), cols: [C('Concepto', 'c'), C('Valor', 'v', 'm')], rows: papRow },
+          { titulo: sec(13, 'Evolución por semana (inicia el lunes)'), cols: [C('Semana', 'semana', 'd'), C('Ingresos', 'ing', 'm'), C('Egresos', 'egr', 'm'), C('Resultado', 'res', 'm')], rows: semRows },
+          { titulo: sec(14, 'Indicadores de control'), cols: [W('Indicador', 'ind'), C('Este periodo', 'val')].concat(A ? [C('Anterior', 'ant')] : []), rows: ind },
+          { titulo: sec(15, 'Criterios y definiciones'), cols: [W('Criterio', 't')], rows: criterios }
         ] };
     } },
   { id: 'ganancias', titulo: 'Ganancias (intereses)', icono: 'percent', desc: 'Cuánto genera en ganancias (intereses) cada préstamo, cuánto de esa ganancia ya cobró y cuánto tiene todavía en la calle.',
@@ -476,13 +583,16 @@ export async function reporte(ctx) {
       if (v === '' || v == null) return '';
       if (c.f === 'm') return money(v); if (c.f === 'n') return num(v); if (c.f === 'p') return Number(v).toFixed(1) + '%'; if (c.f === 'd') return dmy(v); return v;
     };
-    const cls = (c) => (['m', 'n', 'p'].includes(c.f) ? 'r' : c.f === 'd' ? 'c' : '');
+    const cls = (c) => (['m', 'n', 'p'].includes(c.f) ? 'r' : c.f === 'd' ? 'c' : '') + (c.w ? ' w' : '');
     return h('div', { class: 'rep-scroll' }, h('table', { class: 'rep-tabla' },
       h('thead', {}, h('tr', {}, cols.map((c) => h('th', { class: cls(c) }, c.t)))),
       h('tbody', {}, rows.map((r) => h('tr', {}, cols.map((c) => h('td', { class: cls(c) + (c.k === 'dif' && r.dif < 0 ? ' neg' : '') }, celda(c, r[c.k])))))),
       totales ? h('tfoot', {}, h('tr', {}, cols.map((c, i) => h('td', { class: cls(c) }, i === 0 ? 'TOTALES' : c.s ? celda(c, rows.reduce((s, r) => s + (Number(r[c.k]) || 0), 0)) : '')))) : null));
   }
   const sumar = (cols, rows) => cols.map((c, i) => (i === 0 ? 'TOTALES' : c.s ? rows.reduce((s, r) => s + (Number(r[c.k]) || 0), 0) : ''));
+
+  const bloque = (x) => (x.rows.length ? h('div', { class: 'rep-extra' }, h('h3', {}, x.titulo),
+    tabla(x.cols, x.rows, !!x.totales), x.total ? h('div', { class: 'rep-total' }, 'TOTAL ', h('b', {}, money(x.rows.reduce((s, r) => s + r[x.total], 0)))) : null) : null);
 
   function pintar() {
     const empresa = (S.cfg.EMPRESA_NOMBRE || '').trim() || 'DH Rutas';
@@ -491,10 +601,11 @@ export async function reporte(ctx) {
     cuerpo.replaceChildren(...[
       h('div', { class: 'rep-cab' }, h('div', { class: 'rep-emp' }, empresa), h('h2', {}, rep.titulo),
         h('div', { class: 'rep-meta' }, `Generado: ${ahora} · ${S.profile.nombre} · ${n} registro${n === 1 ? '' : 's'}`), h('div', { class: 'rep-meta' }, texto)),
+      ...datos.extras.filter((x) => x.primero).map(bloque),
+      datos.tituloPrincipal ? h('h3', { class: 'rep-sec' }, datos.tituloPrincipal) : null,
       datos.nota ? h('p', { class: 'rep-nota' }, datos.nota) : null,
       n ? tabla(datos.cols, datos.rows, datos.cols.some((c) => c.s)) : h('p', { class: 'rep-vacio' }, 'Sin registros con los filtros elegidos.'),
-      ...datos.extras.filter((x) => x.rows.length).map((x) => h('div', { class: 'rep-extra' }, h('h3', {}, x.titulo),
-        tabla(x.cols, x.rows, false), x.total ? h('div', { class: 'rep-total' }, 'TOTAL ', h('b', {}, money(x.rows.reduce((s, r) => s + r[x.total], 0)))) : null)),
+      ...datos.extras.filter((x) => !x.primero).map(bloque),
       h('div', { class: 'rep-fin' }, '— Fin del reporte —')].filter(Boolean));
   }
 
@@ -531,18 +642,22 @@ export async function reporte(ctx) {
       filas.push(datos.cols.map((c, i) => (i === 0 ? { v: 'TOTALES', t: 's', e: 'b' } : c.s ? { v: sumar(datos.cols, datos.rows)[i], t: 'n', e: c.f === 'm' ? 'bm' : 'bi' } : { v: '', e: 'b' })));
     }
     const hojas = [{ nombre: rep.titulo, anchos: datos.cols.map((c) => (['m'].includes(c.f) ? 105 : c.f === 'd' ? 85 : c.f === 'n' || c.f === 'p' ? 70 : Math.max(90, Math.min(220, c.t.length * 9)))), filas, congelar: datos.nota ? 6 : 5 }];
-    const ex = datos.extras.filter((x) => x.rows.length);
+    const ex = [...datos.extras.filter((x) => x.primero), ...datos.extras.filter((x) => !x.primero)].filter((x) => x.rows.length);
     if (ex.length) {
       const fs = [];
       ex.forEach((x) => {
         fs.push([{ v: x.titulo, t: 's', e: 'b' }]);
         fs.push(x.cols.map((c) => ({ v: c.t, t: 's', e: 'h' })));
         x.rows.forEach((r) => fs.push(x.cols.map((c) => celda(c, r[c.k]))));
+        if (x.totales) fs.push(x.cols.map((c, i) => (i === 0 ? { v: 'TOTALES', t: 's', e: 'b' } : c.s ? { v: x.rows.reduce((t, r) => t + (Number(r[c.k]) || 0), 0), t: 'n', e: 'bm' } : { v: '', e: 'b' })));
         if (x.total) fs.push([{ v: 'TOTAL', t: 's', e: 'b' }, ...Array(x.cols.length - 2).fill({ v: '', e: 'b' }), { v: x.rows.reduce((s, r) => s + r[x.total], 0), t: 'n', e: 'bm' }]);
         fs.push([]);
       });
-      hojas.push({ nombre: 'Resúmenes', anchos: [230, 90, 120, 120, 120], filas: fs });
+      hojas.push({ nombre: datos.hojas ? 'Informe' : 'Resúmenes', anchos: [260, 110, 120, 120, 120, 120, 120], filas: fs });
     }
+    (datos.hojas || []).filter((x) => x.rows.length).forEach((x) => hojas.push({ nombre: x.nombre,
+      anchos: x.cols.map((c) => (c.f === 'm' ? 105 : c.f === 'd' ? 85 : Math.max(90, Math.min(260, c.t.length * 10)))), congelar: 1,
+      filas: [x.cols.map((c) => ({ v: c.t, t: 's', e: 'h' })), ...x.rows.map((r) => x.cols.map((c) => celda(c, r[c.k])))] }));
     descargar(crearXlsx(hojas), `${sinTilde(rep.titulo).replace(/\s+/g, '_')}_${hoyCO()}.xlsx`);
     toast('Archivo de Excel descargado.');
   }
