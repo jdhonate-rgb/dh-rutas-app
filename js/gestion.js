@@ -217,6 +217,7 @@ export async function prestamoNuevo(ctx) {
   const editPap = !cobr || !!yo.papeleria_editable;      // quien decide la papelería (supervisor/admin o cobrador con permiso)
   const puedeTransf = cobr ? !!yo.puede_desembolsar : true;
   const cobraRuta = cobr || !!yo.es_cobrador;           // tiene caja propia
+  const puedeFechaPrest = !!yo.puede_fecha_prestamo;    // permiso: registrar un préstamo de un día anterior (con la caja de ese día abierta)
   let disp = null;
   if (cobraRuta) { try { const d = await q(sb.rpc('mi_efectivo_disponible')); disp = d == null ? null : Number(d); } catch { disp = null; } }
   // "Modo propio": presta él mismo desde su caja (cobrador, o supervisor que cobra y elige un cliente de su ruta)
@@ -226,6 +227,9 @@ export async function prestamoNuevo(ctx) {
   const pctPap = cfgNum('PCT_PAPELERIA_CLIENTE', 0);
   const omite = S.cfg.DIARIO_OMITE_DOMINGO === 'SI';
   const conDinero = () => tipo === 'NUEVO' || tipo === 'RENOVACION';   // solo ahí sale dinero y se descuenta papelería
+
+  const fechaLibre = () => puedeFechaPrest && propio() && conDinero();                 // puede elegir la fecha del préstamo
+  const fechaAtras = () => fechaLibre() && !!fecha.value && fecha.value < hoyCO();     // préstamo de un día anterior
 
   const pick = h('div', {});
   const buscar = h('input', { type: 'search', placeholder: 'Escribe el nombre o documento', autocomplete: 'off' });
@@ -287,17 +291,21 @@ export async function prestamoNuevo(ctx) {
   const bDinero = h('div', {}, bMedio, cuentaBox, bPap);
   const notaModo = h('div', {});
   const lblFecha = h('label', {}, 'Fecha de desembolso');
-  const bFecha = h('div', { class: 'field' }, lblFecha, fecha);
+  const hintFecha = h('p', { class: 'hint', style: { display: 'none' } }, 'Déjala en hoy salvo que sea un préstamo de un día anterior: se registra en tu caja de ese día, que debe estar abierta.');
+  const bFecha = h('div', { class: 'field' }, lblFecha, fecha, hintFecha);
   function aplicarModo() {
     const p = propio();
     const transf = puedeTransf && cuentasOk.length > 0;
     bMedio.style.display = (p ? transf : true) ? '' : 'none';
     if (p && !transf) { setSeg(medio, 'EFECTIVO'); cuentaBox.style.display = 'none'; }
     bPap.style.display = editPap ? '' : 'none';
-    bFecha.style.display = p && conDinero() ? 'none' : '';
-    if (p && conDinero()) { fecha.value = hoyCO(); syncPrimer(); }
+    bFecha.style.display = p && conDinero() && !puedeFechaPrest ? 'none' : '';
+    if (p && conDinero() && !puedeFechaPrest) { fecha.value = hoyCO(); syncPrimer(); }
+    else if (p && conDinero()) fecha.max = hoyCO();
+    hintFecha.style.display = fechaLibre() ? '' : 'none';
     clear(notaModo);
-    if (conDinero() && p) notaModo.append(h('p', { class: 'hint panelnote' }, disp == null
+    if (conDinero() && p && fechaAtras()) notaModo.append(h('p', { class: 'hint panelnote' }, 'Préstamo con fecha anterior: se descuenta de tu caja de ese día (debe estar abierta). El efectivo disponible de esa caja se valida al guardar.'));
+    else if (conDinero() && p) notaModo.append(h('p', { class: 'hint panelnote' }, disp == null
       ? 'Tu caja no está abierta hoy. Sin caja abierta no puedes prestar.'
       : 'Prestas desde tu caja' + (medio.get() === 'EFECTIVO' ? ': tienes ' + money(disp) + ' en efectivo y no puedes prestar más. Lo prestado se descuenta de lo que debes entregar al cerrar la caja.' : ', y el dinero sale de la cuenta que elijas.')));
     if (conDinero() && !p && !cobr) notaModo.append(h('p', { class: 'hint panelnote' }, 'Desembolso de la oficina: el dinero sale de la cuenta que elijas. No se registra en la caja del cobrador.'));
@@ -326,7 +334,7 @@ export async function prestamoNuevo(ctx) {
     lastEnt = ent;
     if (pap >= v) { prev.replaceChildren(h('p', { class: 'err' }, 'La papelería (' + money(pap) + ') debe ser menor al valor prestado.')); return null; }
     const ya = tipo === 'MIGRACION' ? moneyVal(yaPag) : 0;
-    const efProp = propio() && conDinero() && medio.get() === 'EFECTIVO' && disp != null;
+    const efProp = propio() && conDinero() && medio.get() === 'EFECTIVO' && disp != null && !fechaAtras();
     if (ya >= tot) { prev.replaceChildren(h('p', { class: 'err' }, 'Lo ya cobrado (' + money(ya) + ') debe ser menor al total a cobrar (' + money(tot) + ').')); return null; }
     const cal = calendario(mod.value, primer.value || defPrimer(), n, omite);
     const L = (a, b, bold) => h('div', { class: 'line' }, h(bold ? 'b' : 'span', { class: 'grow' }, a), h(bold ? 'b' : 'span', { class: 'amt' }, b));
@@ -346,7 +354,7 @@ export async function prestamoNuevo(ctx) {
     return { v, p, n, ya, ent };
   }
   [valor, pct, cuotas, yaPag, primer, papVal].forEach((e) => e.addEventListener('input', calc));
-  fecha.addEventListener('input', () => { syncPrimer(); calc(); });
+  fecha.addEventListener('input', () => { syncPrimer(); aplicarModo(); calc(); });
   mod.addEventListener('change', () => { syncPrimer(); calc(); });
 
   const crear = h('button', { class: 'btn primary block', on: { click: (e) => busy(e.currentTarget, async () => {
@@ -354,17 +362,22 @@ export async function prestamoNuevo(ctx) {
     const r = calc();
     if (!r) throw new Error('Completa los datos del préstamo.');
     const p = propio();
-    if (p && conDinero()) {
+    if (p && conDinero() && !fechaAtras()) {
       if (disp == null) throw new Error('No tienes la caja abierta hoy. Sin caja abierta no puedes prestar.');
       if (medio.get() === 'EFECTIVO' && r.ent > disp) throw new Error('No tienes efectivo suficiente: en tu caja hay ' + money(disp) + ' y este préstamo entrega ' + money(r.ent) + '.');
     }
     if (conDinero() && medio.get() === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No tienes cuentas habilitadas para desembolsar. Pídele al administrador que las configure.');
     const manual = editPap && conDinero() && descPap.get() === 'SI' && papTipo.get() === 'MAN';
     if (manual && !(moneyVal(papVal) >= 0)) throw new Error('Escribe la papelería en pesos.');
+    if (fechaLibre()) {
+      if (!fecha.value) throw new Error('Elige la fecha del préstamo.');
+      if (fecha.value > hoyCO()) throw new Error('La fecha del préstamo no puede ser futura.');
+      if (primer.value && primer.value <= fecha.value) throw new Error('La fecha del primer cobro debe ser posterior a la del desembolso.');
+    }
     const id = await q(sb.rpc('crear_prestamo', {
       p_cliente: elegido.id, p_valor: r.v, p_porcentaje: r.p, p_modalidad: mod.value, p_cuotas: r.n,
       p_cuenta: conDinero() && medio.get() === 'TRANSFERENCIA' ? cuenta.value : null, p_medio: conDinero() ? medio.get() : 'EFECTIVO',
-      p_fecha_desembolso: (cobr || (p && conDinero())) ? hoyCO() : fecha.value, p_anterior: qa, p_tipo: tipo, p_ya_pagado: r.ya,
+      p_fecha_desembolso: fechaLibre() ? fecha.value : ((cobr || (p && conDinero())) ? hoyCO() : fecha.value), p_anterior: qa, p_tipo: tipo, p_ya_pagado: r.ya,
       p_descuenta_papeleria: editPap && conDinero() ? descPap.get() === 'SI' : null,
       p_papeleria_valor: manual ? moneyVal(papVal) : null,
       p_paga_comision: cobr ? null : pagaCom.get() === 'SI',
