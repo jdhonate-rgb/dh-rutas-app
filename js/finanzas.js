@@ -320,12 +320,32 @@ export async function liquidacion(ctx) {
       linea('Comisión sugerida (' + Number(l.pct_comision || 40) + ' %)', money(l.comision_sugerida != null ? l.comision_sugerida : l.comision_papeleria)),
       linea('Comisión que se pagará', money(l.comision_papeleria)),
       h('button', { class: 'btn small', type: 'button', on: { click: () => detalleComision(l) } }, 'Ver préstamos con papelería')),
-    pagada ? h('p', { class: 'muted small' }, 'Pagada el ' + fdate(l.fecha_pago) + ' en efectivo.')
+    pagada ? h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Pagada el ' + fdate(l.fecha_pago) + ' en efectivo.'),
+        isAdmin() ? h('button', { class: 'btn danger small block', on: { click: () => eliminarLiq(l, ctx, true) } }, icon('trash'), 'Eliminar liquidación') : null)
       : h('div', { class: 'stack' },
         h('button', { class: 'btn', on: { click: () => editarBase(l, ctx) } }, icon('edit'), 'Editar pago base'),
         h('button', { class: 'btn', on: { click: () => editarComision(l, ctx) } }, icon('edit'), 'Editar comisión de papelería'),
         h('button', { class: 'btn', on: { click: () => agregarAjuste(l, ctx) } }, icon('plus'), 'Agregar descuento o bono'),
+        h('button', { class: 'btn danger small block', on: { click: () => eliminarLiq(l, ctx, false) } }, icon('trash'), 'Eliminar liquidación'),
         h('div', { class: 'actionbar' }, h('button', { class: 'btn primary block', on: { click: () => pagar(l, neto, ctx) } }, 'Pagar ' + money(neto))))));
+}
+
+// Eliminar una liquidación (borrador o pagada). El servidor revierte el pago en el efectivo de la oficina,
+// libera las cajas con faltante para la próxima liquidación y deja el rastro en Actividad.
+function eliminarLiq(l, ctx, pagada) {
+  const quien = nombreDe(l.cobrador_id) + ' · ' + fdate(l.fecha_inicio) + ' al ' + fdate(l.fecha_fin);
+  confirmarEliminar({
+    titulo: 'Eliminar liquidación',
+    texto: quien + '. ' + (pagada
+      ? 'Se devuelve al efectivo de la oficina el pago de ' + money(l.neto_pagado) + ' y los faltantes de caja vuelven a quedar pendientes para la próxima liquidación del cobrador. Escribe el motivo.'
+      : 'Los faltantes de caja que tenía vuelven a quedar pendientes para la próxima liquidación del cobrador.'),
+    boton: 'Eliminar liquidación',
+    onOk: async (motivo) => {
+      if (pagada && !motivo) throw new Error('Escribe el motivo para eliminar una liquidación pagada.');
+      await q(sb.rpc('eliminar_liquidacion', { p_liq: l.id, p_motivo: motivo }));
+      toast('Liquidación eliminada'); location.hash = '#/liquidaciones';
+    }
+  });
 }
 const linea = (l, v) => h('div', { class: 'line' }, h('span', { class: 'grow' }, l), h('span', { class: 'amt' }, v));
 
