@@ -14,6 +14,8 @@ export async function gastos(ctx) {
   const cat = selectEl(CATS.map((c) => [c, c]), 'Gasolina');
   const det = h('input', { type: 'text', placeholder: 'Detalle (opcional)', maxlength: '120' });
   const val = moneyInput();
+  const puedeFecha = !!(S.profile && S.profile.puede_fecha_gasto);   // permiso: registrar un gasto de un día anterior (con la caja de ese día abierta)
+  const fechaG = h('input', { type: 'date', value: hoyCO(), max: hoyCO() });
   const permTr = !staff && S.profile && S.profile.gastos_transferencia === true;
   const misCuentas = new Set((S.profile && S.profile.cuentas_permitidas) || []);
   const cuentasOk = S.cuentas.filter((c) => c.tipo !== 'EFECTIVO' && c.tipo !== 'PAPELERIA' && (staff || misCuentas.has(c.id)));
@@ -25,9 +27,11 @@ export async function gastos(ctx) {
     if (v <= 0) throw new Error('Escribe el valor del gasto.');
     const m = metodo ? metodo.get() : 'EFECTIVO';
     if (m === 'TRANSFERENCIA' && !cuentasOk.length) throw new Error('No hay cuentas disponibles.');
-    await q(sb.rpc('registrar_gasto', { p_categoria: cat.value, p_descripcion: det.value.trim() || null, p_valor: v, p_metodo: m, p_cuenta: m === 'TRANSFERENCIA' ? cuenta.value : null, p_obs: null }));
-    toast('Gasto de ' + money(v) + ' guardado');
-    val.value = ''; det.value = '';
+    const fc = puedeFecha && fechaG.value && fechaG.value !== hoyCO() ? fechaG.value : null;
+    if (fc && fc > hoyCO()) throw new Error('La fecha del gasto no puede ser futura.');
+    await q(sb.rpc('registrar_gasto', { p_categoria: cat.value, p_descripcion: det.value.trim() || null, p_valor: v, p_metodo: m, p_cuenta: m === 'TRANSFERENCIA' ? cuenta.value : null, p_obs: null, p_fecha: fc }));
+    toast('Gasto de ' + money(v) + ' guardado' + (fc ? ' para el ' + fdate(fc) : ''));
+    val.value = ''; det.value = ''; fechaG.value = hoyCO();
     cargar();
   }) } }, icon('plus'), 'Guardar gasto');
 
@@ -39,7 +43,7 @@ export async function gastos(ctx) {
   desde.addEventListener('change', () => cargar()); hasta.addEventListener('change', () => cargar());
 
   view.replaceChildren(h('div', { class: 'stack' },
-    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Nuevo gasto'), field('Categoría', cat), field('Detalle', det), field('Valor', val), metodo ? h('div', { class: 'field' }, h('label', {}, 'Cómo se pagó'), metodo) : null, cuentaBox, guardar,
+    h('div', { class: 'panel' }, h('div', { class: 'h2' }, 'Nuevo gasto'), field('Categoría', cat), field('Detalle', det), field('Valor', val), puedeFecha ? h('div', {}, field('Fecha del gasto', fechaG), h('p', { class: 'hint', style: { margin: '-8px 0 14px' } }, 'Déjala en hoy salvo que sea un gasto de un día anterior con tu caja de ese día abierta.')) : null, metodo ? h('div', { class: 'field' }, h('label', {}, 'Cómo se pagó'), metodo) : null, cuentaBox, guardar,
       staff ? null : h('p', { class: 'hint', style: { marginTop: '10px' } }, 'Los gastos en efectivo se descuentan de tu caja al cuadrar con la supervisora. Los gastos por transferencia salen de la cuenta que elijas y no afectan tu efectivo.')),
     h('div', { class: 'section' }, h('h3', {}, staff ? 'Gastos registrados' : 'Gastos de hoy'), filtro, lista)));
 
