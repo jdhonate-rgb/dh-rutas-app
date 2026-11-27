@@ -2,6 +2,7 @@
 import { h, clear, icon, money, fdate, ftime, toast, fail, busy, empty, skeleton, sheet, field, selectEl, segmented, moneyInput, moneyVal, telDigits, hoyCO, num } from './lib.js';
 import { S, sb, q, isStaff, nombreDe, esCob } from './state.js';
 import { confirmarEliminar } from './lib.js';
+import { enviarEstado } from './estado.js';
 const TIPOS = { NUEVO: 'Nuevo', MIGRACION: 'Migración', RENOVACION: 'Renovación', REFINANCIACION: 'Refinanciado' };
 
 const F = { vista: 'hoy', mod: 'TODAS', buscar: '', cobrador: 'TODOS' };
@@ -222,6 +223,7 @@ export async function tarjeta(ctx) {
   view.replaceChildren(h('div', { class: 'stack' },
     alertaVenc, hero, prog,
     kv,
+    h('button', { class: 'btn block', on: { click: (e) => enviarEstado(pr, cli, cuotas, e.currentTarget) } }, icon('chat'), 'Enviar estado al cliente'),
     h('div', { class: 'section' }, h('h3', {}, 'Cuotas'), grid),
     h('div', { class: 'section' }, h('h3', {}, 'Pagos'), hist),
     !staff ? h('div', { class: 'row', style: { flexWrap: 'wrap', gap: '8px' } },
