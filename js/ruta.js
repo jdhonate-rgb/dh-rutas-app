@@ -223,7 +223,7 @@ export async function tarjeta(ctx) {
   view.replaceChildren(h('div', { class: 'stack' },
     alertaVenc, hero, prog,
     kv,
-    h('button', { class: 'btn block', on: { click: (e) => enviarEstado(pr, cli, cuotas, e.currentTarget) } }, icon('chat'), 'Enviar estado al cliente'),
+    h('button', { class: 'btn block', on: { click: (e) => enviarEstado(pr, cli, cuotas, pagos, e.currentTarget) } }, icon('chat'), 'Enviar estado al cliente'),
     h('div', { class: 'section' }, h('h3', {}, 'Cuotas'), grid),
     h('div', { class: 'section' }, h('h3', {}, 'Pagos'), hist),
     !staff ? h('div', { class: 'row', style: { flexWrap: 'wrap', gap: '8px' } },
