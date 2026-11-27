@@ -1,22 +1,22 @@
 // Tarjeta digital del préstamo: se dibuja en un canvas y se envía al cliente (WhatsApp / compartir / descargar).
 import { toast, fail, money, telDigits, hoyCO } from './lib.js';
-import { S } from './state.js';
+import { S, sb, q } from './state.js';
 
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 const fcorta = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).slice(0, 10).split('-'); return d + '/' + m + '/' + y.slice(2); };
 
 // Filas: una por cuota; abono = lo pagado de esa cuota; saldo = lo que queda de la deuda total
-export function filasEstado(pr, cuotas) {
+export function filasEstado(pr, cuotas, fechasPago = {}) {
   let resta = Number(pr.total_a_cobrar || 0);
   return cuotas.map((c) => {
     const ab = Number(c.valor_pagado || 0);
     resta -= ab;
-    return { n: c.numero, fecha: c.fecha_programada, abono: ab, saldo: Math.max(resta, 0), pagada: c.estado === 'PAGADA' };
+    return { n: c.numero, fecha: c.fecha_programada, fpago: fechasPago[c.id] || '', abono: ab, pend: Math.max(Number(c.saldo_cuota || 0), 0), saldo: Math.max(resta, 0), pagada: c.estado === 'PAGADA' };
   });
 }
 
-export function dibujarTarjeta(pr, cli, cuotas) {
-  const filas = filasEstado(pr, cuotas);
+export function dibujarTarjeta(pr, cli, cuotas, fechasPago) {
+  const filas = filasEstado(pr, cuotas, fechasPago);
   const W = 900, PAD = 36, RH = 40, top = 430;
   const H = top + 70 + filas.length * RH + 130;
   const cv = document.createElement('canvas');
@@ -44,21 +44,23 @@ export function dibujarTarjeta(pr, cli, cuotas) {
   line(PAD, 305, W - PAD, 305);
   col('FECHA DE INICIO', d0 ? d0 + ' de ' + MESES[Number(m0) - 1] + ' de ' + y0 : '', PAD, 340);
   col('SALDO PENDIENTE', money(saldo), W / 2 + 10, 340);
-  txt(pr.cuotas_pagadas + ' de ' + pr.numero_cuotas + ' cuotas pagadas', PAD, 410, { s: 20, w: '700', c: '#0f3d66' });
+  const npend = cuotas.filter((c) => c.estado !== 'PAGADA').length;
+  txt(pr.cuotas_pagadas + ' de ' + pr.numero_cuotas + ' cuotas pagadas · ' + npend + (npend === 1 ? ' pendiente' : ' pendientes'), PAD, 410, { s: 20, w: '700', c: '#0f3d66' });
 
   // Tabla
-  const cx = [PAD, PAD + 90, PAD + 330, PAD + 600];
+  const cx = [PAD, PAD + 56, PAD + 196, PAD + 350, PAD + 520, PAD + 690];
   let y = top;
   g.fillStyle = '#eaf1f8'; g.fillRect(PAD - 8, y, W - 2 * PAD + 16, 46);
-  txt('N.º', cx[0], y + 31, { s: 20, w: '800' }); txt('FECHA', cx[1], y + 31, { s: 20, w: '800' });
-  txt('ABONO', cx[2], y + 31, { s: 20, w: '800' }); txt('SALDO', cx[3], y + 31, { s: 20, w: '800' });
+  ['N.º', 'F. CUOTA', 'F. PAGO', 'ABONO', 'PENDIENTE', 'SALDO'].forEach((t, i) => txt(t, cx[i], y + 31, { s: 18, w: '800' }));
   y += 46;
   filas.forEach((f, i) => {
     if (i % 2) { g.fillStyle = '#f7f9fc'; g.fillRect(PAD - 8, y, W - 2 * PAD + 16, RH); }
-    txt(f.n, cx[0], y + 28, { s: 21, c: '#6b7787' });
-    txt(fcorta(f.fecha), cx[1], y + 28, { s: 21 });
-    txt(f.abono > 0 ? money(f.abono) : '—', cx[2], y + 28, { s: 21, w: f.abono > 0 ? '700' : '', c: f.abono > 0 ? '#12703a' : '#9aa5b4' });
-    txt(money(f.saldo), cx[3], y + 28, { s: 21 });
+    txt(f.n, cx[0], y + 28, { s: 20, c: '#6b7787' });
+    txt(fcorta(f.fecha), cx[1], y + 28, { s: 20 });
+    txt(f.fpago ? fcorta(f.fpago) : '—', cx[2], y + 28, { s: 20, c: f.fpago ? '#1b2330' : '#9aa5b4' });
+    txt(f.abono > 0 ? money(f.abono) : '—', cx[3], y + 28, { s: 20, w: f.abono > 0 ? '700' : '', c: f.abono > 0 ? '#12703a' : '#9aa5b4' });
+    txt(f.pend > 0 ? money(f.pend) : 'Pagada', cx[4], y + 28, { s: 20, w: f.pend > 0 ? '700' : '', c: f.pend > 0 ? '#b42318' : '#12703a' });
+    txt(money(f.saldo), cx[5], y + 28, { s: 20 });
     y += RH;
   });
   line(PAD - 8, y, W - PAD + 8, y, '#0f3d66', 2);
@@ -82,7 +84,8 @@ export function textoEstado(pr, cli, cuotas) {
 export async function enviarEstado(pr, cli, cuotas, btn) {
   if (btn) btn.disabled = true;
   try {
-    const cv = dibujarTarjeta(pr, cli, cuotas);
+    const fechas = await fechasDePago(cuotas);
+    const cv = dibujarTarjeta(pr, cli, cuotas, fechas);
     const blob = await new Promise((ok) => cv.toBlob(ok, 'image/png'));
     if (!blob) throw new Error('No se pudo generar la imagen');
     const nombre = 'estado-' + String(cli.nombre_completo || 'cliente').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.png';
@@ -101,4 +104,18 @@ export async function enviarEstado(pr, cli, cuotas, btn) {
     window.open('https://wa.me/' + (tel || '') + '?text=' + encodeURIComponent(texto), '_blank', 'noopener');
   } catch (e) { fail(e); }
   finally { if (btn) btn.disabled = false; }
+}
+
+// Fecha del último pago vigente aplicado a cada cuota. Si algo falla, la tarjeta se genera igual (sin esa columna).
+async function fechasDePago(cuotas) {
+  try {
+    const ids = cuotas.map((c) => c.id);
+    const pc = await q(sb.from('pago_cuotas').select('pago_id,cuota_id,valor').in('cuota_id', ids));
+    if (!pc.length) return {};
+    const pagos = await q(sb.from('pagos').select('id,fecha_pago,hora_pago,estado_pago').in('id', [...new Set(pc.map((x) => x.pago_id))]));
+    const pm = new Map(pagos.filter((p) => p.estado_pago === 'VIGENTE').map((p) => [p.id, p]));
+    const out = {};
+    pc.forEach((x) => { const p = pm.get(x.pago_id); if (p && (!out[x.cuota_id] || p.hora_pago > out[x.cuota_id + '_h'])) { out[x.cuota_id] = p.fecha_pago; out[x.cuota_id + '_h'] = p.hora_pago; } });
+    return out;
+  } catch (e) { return {}; }
 }
